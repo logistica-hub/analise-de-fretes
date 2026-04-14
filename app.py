@@ -2,91 +2,116 @@ import streamlit as st
 import pandas as pd
 import math
 
-st.set_page_config(page_title="Auditor de Frete Universal", layout="wide")
+st.set_page_config(page_title="Auditor de Frete Profissional", layout="wide")
 
-st.title("🚚 Auditor de Frete Multimalha")
-
-# --- SIDEBAR: REGRAS DE TAXAS ---
-st.sidebar.header("⚙️ Configuração de Taxas")
-p_pedagio = st.sidebar.number_input("Pedágio (por fração 100kg)", value=14.70)
-p_advalorem = st.sidebar.number_input("Ad Valorem (%)", value=0.15) / 100
-p_advalorem_min = st.sidebar.number_input("Ad Valorem Mínimo (R$)", value=9.50)
-p_gris = st.sidebar.number_input("Gris (%)", value=0.20) / 100
-p_gris_min = st.sidebar.number_input("Gris Mínimo (R$)", value=6.00)
+st.title("🚚 Auditor de Frete Universal")
+st.info("O sistema agora utiliza a lógica exata da sua fórmula de Excel.")
 
 # --- UPLOAD ---
 c1, c2, c3 = st.columns(3)
-with c1: f_base = st.file_uploader("1. Planilha Base", type=["xlsx", "csv"])
-with c2: f_frete = st.file_uploader("2. Tabela de Frete", type=["xlsx", "csv"])
-with c3: f_cidades = st.file_uploader("3. Relação Cidades", type=["xlsx", "csv"])
+with c1: f_base = st.file_uploader("1. Planilha Base", type=["xlsx"])
+with c2: f_frete = st.file_uploader("2. Tabela de Frete", type=["xlsx"])
+with c3: f_cidades = st.file_uploader("3. Relação Cidades", type=["xlsx"])
 
 if f_base and f_frete and f_cidades:
-    df_base = pd.read_excel(f_base) if "xlsx" in f_base.name else pd.read_csv(f_base)
-    df_frete = pd.read_excel(f_frete) if "xlsx" in f_frete.name else pd.read_csv(f_frete)
-    df_cidades = pd.read_excel(f_cidades) if "xlsx" in f_cidades.name else pd.read_csv(f_cidades)
+    df_base = pd.read_excel(f_base).fillna(0)
+    df_frete = pd.read_excel(f_frete).fillna(0)
+    df_cidades = pd.read_excel(f_cidades).fillna(0)
 
     st.divider()
-    st.subheader("🔗 Mapeamento Universal")
+    st.subheader("🔗 Mapeamento de Colunas")
     
     m1, m2, m3 = st.columns(3)
     with m1:
-        col_cidade_base = st.selectbox("Coluna Cidade (Base)", df_base.columns)
-        col_peso_base = st.selectbox("Coluna Peso (Base)", df_base.columns)
-        col_valor_base = st.selectbox("Coluna Valor NF (Base)", df_base.columns)
+        st.write("**Dados da Movimentação**")
+        c_cid = st.selectbox("Cidade Destino", df_base.columns)
+        c_uf = st.selectbox("UF Destino", df_base.columns)
+        c_tipo = st.selectbox("Tipo (Capital/Interior)", df_base.columns)
+        c_peso = st.selectbox("Peso Real", df_base.columns)
+        c_val = st.selectbox("Valor NF", df_base.columns)
+    
     with m2:
-        col_cidade_ref = st.selectbox("Coluna Cidade (Planilha Cidades)", df_cidades.columns)
-        col_sigla_ref = st.selectbox("Coluna Sigla/Região (Planilha Cidades)", df_cidades.columns)
+        st.write("**Referência de Cidades**")
+        c_cid_ref = st.selectbox("Cidade (Planilha Cidades)", df_cidades.columns)
+        c_sigla_ref = st.selectbox("Sigla/Região (Planilha Cidades)", df_cidades.columns)
+    
     with m3:
-        col_sigla_frete = st.selectbox("Coluna Sigla (Tabela Frete)", df_frete.columns)
-        col_excedente = st.selectbox("Coluna Preço KG Excedente (>100kg)", df_frete.columns)
+        st.write("**Tabela de Preços (Jamef)**")
+        c_sigla_f = st.selectbox("Coluna Sigla (Tabela Frete)", df_frete.columns)
+        c_faixas = st.multiselect("Colunas de Faixas (E até J na Jamef)", df_frete.columns)
+        c_exc = st.selectbox("Coluna Excedente (K na Jamef)", df_frete.columns)
 
-    # Seleção múltipla para as faixas de peso (Ex: 10kg, 20kg, 30kg...)
-    col_faixas = st.multiselect("Selecione TODAS as colunas de faixas de peso (ex: 10kg, 20kg...)", df_frete.columns)
-
-    if st.button("🚀 Processar Auditoria") and col_faixas:
-        def calcular_row(row):
+    if st.button("🚀 Executar Auditoria"):
+        def auditoria(row):
             try:
-                cidade = str(row[col_cidade_base]).strip().upper()
-                peso = float(row[col_peso_base])
-                valor_nf = float(row[col_valor_base])
+                # Dados da linha
+                cid = str(row[c_cid]).strip().upper()
+                uf = str(row[c_uf]).strip().upper()
+                tipo = str(row[c_tipo]).strip().upper()
+                peso = float(row[c_peso])
+                valor_nf = float(row[c_val])
 
                 # 1. Busca Sigla
-                sigla = df_cidades[df_cidades[col_cidade_ref].str.upper() == cidade][col_sigla_ref].values[0]
+                sigla = df_cidades[df_cidades[c_cid_ref].str.upper() == cid][c_sigla_ref].values[0]
                 
-                # 2. Busca Linha de Preço
-                linha_preco = df_frete[df_frete[col_sigla_frete] == sigla].iloc[0]
+                # 2. Busca Dados na Tabela Frete
+                f_row = df_frete[df_frete[c_sigla_f] == sigla].iloc[0]
 
-                # 3. Lógica de Frete Peso
-                if peso > 100:
-                    frete_peso = peso * float(linha_preco[col_excedente])
-                else:
-                    # Encontra a menor faixa que atende ao peso
-                    # Supõe que os nomes das colunas de faixa sejam números ou contenham números (ex: "10", "20")
-                    faixas_numeros = [int(''.join(filter(str.isdigit, c))) for c in col_faixas]
-                    faixas_ordenadas = sorted(zip(faixas_numeros, col_faixas))
-                    
-                    col_escolhida = col_faixas[-1] # Default última
-                    for num, nome_col in faixas_ordenadas:
-                        if peso <= num:
-                            col_escolhida = nome_col
+                # --- LÓGICA DO FRETE PESO (Sua fórmula Excel) ---
+                if peso <= 100:
+                    # CORRESP aproximado para faixas
+                    faixas_num = sorted([int(''.join(filter(str.isdigit, str(c)))) for c in c_faixas])
+                    col_nome = c_faixas[-1]
+                    for n in faixas_num:
+                        if peso <= n:
+                            col_nome = [c for c in c_faixas if str(n) in str(c)][0]
                             break
-                    frete_peso = float(linha_preco[col_escolhida])
+                    frete_peso = float(f_row[col_nome])
+                else:
+                    # Valor de 100kg + (Peso - 100) * Excedente
+                    valor_100kg = float(f_row[c_faixas[-1]])
+                    valor_exc = float(f_row[c_exc])
+                    frete_peso = valor_100kg + ((peso - 100) * valor_exc)
 
-                # 4. Taxas
-                pedagio = math.ceil(peso / 100) * p_pedagio
-                adval = max(valor_nf * p_advalorem, p_advalorem_min)
-                gris = max(frete_peso * p_gris, p_gris_min)
+                # --- TAXAS (CONFORME SUA FÓRMULA) ---
+                # Ad Valorem (Coluna L e M da sua Jamef)
+                adv_p = float(f_row.iloc[11]) # Coluna L
+                adv_m = float(f_row.iloc[12]) # Coluna M
+                taxa_advalorem = max(valor_nf * adv_p, adv_m)
+
+                # Pedágio (Fração 100kg * 14.7)
+                taxa_pedagio = math.ceil(peso / 100) * 14.7
+
+                # TAS (Coluna N)
+                taxa_tas = float(f_row.iloc[13])
+
+                # Taxa Fixa Adicional (O "7.41" da sua fórmula)
+                taxa_fixa = 7.41
+
+                # Gris Especial (O "0,0016" ou Mínimo da sua fórmula)
+                taxa_gris = max(valor_nf * 0.0016, 4.36)
+
+                # REGRA RIO DE JANEIRO (EMEX/TDA)
+                taxa_rj_extra = 0
+                if uf == "RJ":
+                    # Regra Capital
+                    if "CAPITAL" in tipo:
+                        taxa_rj_extra += max(valor_nf * 0.0031, 28.48)
+                    # Regra Geral RJ
+                    taxa_rj_extra += max(valor_nf * 0.0021, 6.87)
+
+                total = frete_peso + taxa_advalorem + taxa_pedagio + taxa_tas + taxa_fixa + taxa_gris + taxa_rj_extra
                 
-                total = frete_peso + pedagio + adval + gris
-                return pd.Series([sigla, frete_peso, pedagio, adval, gris, total])
-            except:
-                return pd.Series(["Erro", 0, 0, 0, 0, 0])
+                return pd.Series([sigla, frete_peso, taxa_pedagio, taxa_advalorem, taxa_gris, taxa_rj_extra, total])
 
-        cols_result = ['Sigla', 'Frete Peso', 'Pedágio', 'Ad Valorem', 'Gris', 'Total Calculado']
-        df_base[cols_result] = df_base.apply(calcular_row, axis=1)
+            except Exception as e:
+                return pd.Series(["Erro", 0, 0, 0, 0, 0, 0])
+
+        colunas_fim = ['Sigla', 'Frete Peso', 'Pedágio', 'Ad Valorem', 'Gris', 'Extras RJ', 'Total Calculado']
+        df_base[colunas_fim] = df_base.apply(auditoria, axis=1)
         
-        st.success("Auditoria Finalizada!")
+        st.success("✅ Processado com sucesso!")
         st.dataframe(df_base)
         
         csv = df_base.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 Baixar Resultado", csv, "auditoria_final.csv", "text/csv")
+        st.download_button("📥 Baixar Excel Auditado", csv, "auditoria_jamef.csv", "text/csv")
