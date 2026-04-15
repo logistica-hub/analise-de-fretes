@@ -6,7 +6,7 @@ import io
 from datetime import datetime
 import math
 
-# 1. Configuração e Estilo
+# 1. Configuração e Estilo (Foco na Barra Lateral e Métricas)
 st.set_page_config(page_title="Comparativo de Tabelas", layout="wide")
 
 st.markdown("""
@@ -15,7 +15,9 @@ st.markdown("""
     [data-testid="stMetric"] { background-color: #FFFFFF !important; border: 1px solid #D1D1D1; padding: 15px; border-radius: 10px; }
     [data-testid="stMetricLabel"] p { color: #000000 !important; font-weight: bold !important; }
     [data-testid="stMetricValue"] div { color: #1E88E5 !important; }
-    [data-testid="stSidebar"] { background-color: #F8F9FA !important; }
+    /* Estilo da Barra Lateral */
+    [data-testid="stSidebar"] { background-color: #F8F9FA !important; min-width: 300px; }
+    [data-testid="stSidebarNav"] { padding-top: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -38,7 +40,7 @@ init_db()
 if 'edit_id' not in st.session_state: st.session_state.edit_id = None
 if 'view_details' not in st.session_state: st.session_state.view_details = {}
 
-# --- SIDEBAR ---
+# --- SIDEBAR (Layout Original) ---
 with st.sidebar:
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
@@ -53,7 +55,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("NAVEGAÇÃO", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (CORREÇÃO TOTAL DO VALOR 18) ---
+# --- DASHBOARD (DINÂMICO SEM VALORES FIXOS) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -76,20 +78,22 @@ if menu == "📊 Dashboard":
         if filtro_t: df_final = df_final[df_final['Transportadora'].isin(filtro_t)]
         if filtro_uf: df_final = df_final[df_final['UF'].isin(filtro_uf)]
 
+        # MÉTRICAS 100% DINÂMICAS
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {df_final['Valor'].sum():,.2f}")
-        # CORREÇÃO: Conta o número de registros reais filtrados (sem valores fixos)
-        c2.metric("Notas Processadas", f"{len(df_final)}") 
+        # AQUI: Contagem real baseada no DataFrame filtrado
+        c2.metric("Notas Processadas", f"{df_final.shape[0]}") 
         c3.metric("Ticket Médio", f"R$ {df_final['Valor'].mean():,.2f}" if not df_final.empty else "R$ 0.00")
 
         if not df_final.empty:
             st.subheader("📋 Consolidado por UF")
             st.dataframe(df_final.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0), use_container_width=True)
+    else:
+        st.info("Nenhuma cotação realizada ainda.")
 
-# --- TRANSPORTADORAS (CORREÇÃO DA EDIÇÃO/MAPPING) ---
+# --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
-    
     is_editing = st.session_state.edit_id is not None
     
     with st.expander("📝 Configurar Tabela JAMEF", expanded=is_editing):
@@ -105,7 +109,6 @@ elif menu == "🚛 Transportadoras":
         with u1: f_tab = st.file_uploader("Excel Tabela", type=["xlsx"])
         with u2: f_cid = st.file_uploader("Excel Cidades", type=["xlsx"])
         
-        # Lógica para permitir edição mesmo sem re-upload imediato
         df_t = None
         if f_tab:
             df_t = pd.read_excel(f_tab).fillna(0)
@@ -114,13 +117,12 @@ elif menu == "🚛 Transportadoras":
 
         if df_t is not None:
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
-            
             st.markdown("### ⚖️ Faixas de Peso")
             sel_kg = str(mapa_previo.get('kg_extra', "Não mapear")) if is_editing else "Não mapear"
-            col_kg_extra = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t, index=cols_t.index(sel_kg) if sel_kg in cols_t else 0)
+            col_kg_extra = st.selectbox("Coluna Kg Adicional", cols_t, index=cols_t.index(sel_kg) if sel_kg in cols_t else 0)
             
             n_f_val = len(mapa_previo.get('faixas', [])) if is_editing else 6
-            n_f = st.number_input("Qtd Faixas", 1, 50, n_f_val)
+            n_f = st.number_input("Qtd Faixas", 1, 50, n_f_val if n_f_val > 0 else 6)
             faixas = []
             for i in range(int(n_f)):
                 r = st.columns(3)
@@ -143,7 +145,7 @@ elif menu == "🚛 Transportadoras":
                 mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra}
                 conn = sqlite3.connect(DB_NAME)
                 json_tab = df_t.to_json()
-                json_cid = pd.read_excel(f_cid).to_json() if f_cid else edit_data['cidades_json']
+                json_cid = pd.read_excel(f_cid).to_json() if f_cid else (edit_data['cidades_json'] if is_editing else "{}")
                 if is_editing:
                     conn.execute("UPDATE transportadoras SET nome=?, tabela_json=?, cidades_json=?, mapeamento_json=? WHERE id=?",
                                  (t_nome, json_tab, json_cid, json.dumps(mapa), st.session_state.edit_id))
@@ -153,7 +155,7 @@ elif menu == "🚛 Transportadoras":
                 conn.commit(); conn.close()
                 st.session_state.edit_id = None; st.rerun()
 
-        if is_editing and st.button("❌ Cancelar"):
+        if is_editing and st.button("❌ Cancelar Edição"):
             st.session_state.edit_id = None; st.rerun()
 
     st.markdown("### 📋 Transportadoras Cadastradas")
@@ -213,7 +215,7 @@ elif menu == "💰 Comparativo":
             res_j = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
                          (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(), json.dumps(res_j)))
-            conn.commit(); st.success("Calculado!"); st.dataframe(df_res)
+            conn.commit(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
 
     st.markdown("### 📄 Histórico")
     df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn)
