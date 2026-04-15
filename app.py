@@ -31,11 +31,8 @@ def init_db():
 
 init_db()
 
-# INICIALIZAÇÃO CORRETA DOS ESTADOS (Evita o AttributeError)
-if 'view_details' not in st.session_state: 
-    st.session_state.view_details = {}
-if 'edit_id' not in st.session_state: 
-    st.session_state.edit_id = None
+if 'view_details' not in st.session_state: st.session_state.view_details = {}
+if 'edit_id' not in st.session_state: st.session_state.edit_id = None
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -52,7 +49,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (ESTILO B.I. REAL - CONTAGEM DE NOTAS) ---
+# --- DASHBOARD (B.I. REAL) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -60,15 +57,11 @@ if menu == "📊 Dashboard":
     conn.close()
 
     if not df_h.empty:
-        # AQUI RESOLVEMOS O PROBLEMA DO 18: 
-        # Carregamos todas as notas de todos os lotes para o BI poder filtrar nota por nota
         todas_notas = []
         for _, row in df_h.iterrows():
             notas_lote = pd.read_json(io.StringIO(row['detalhes_json']))
             notas_lote['Transportadora_Ref'] = row['transportadora']
-            # Garante que a coluna de UF exista (geralmente índice 3)
-            if 'UF' not in notas_lote.columns:
-                notas_lote['UF'] = notas_lote.iloc[:, 3]
+            if 'UF' not in notas_lote.columns: notas_lote['UF'] = notas_lote.iloc[:, 3]
             todas_notas.append(notas_lote)
         
         df_bi = pd.concat(todas_notas, ignore_index=True)
@@ -82,7 +75,6 @@ if menu == "📊 Dashboard":
         if filtro_t: df_filtrado = df_filtrado[df_filtrado['Transportadora_Ref'].isin(filtro_t)]
         if filtro_uf: df_filtrado = df_filtrado[df_filtrado['UF'].isin(filtro_uf)]
 
-        # MÉTRICAS: Agora o len(df_filtrado) é a contagem real de Notas Fiscais!
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {df_filtrado['VALOR_SISTEMA'].sum():,.2f}")
         c2.metric("Notas Processadas", f"{len(df_filtrado)}") 
@@ -172,7 +164,7 @@ elif menu == "🚛 Transportadoras":
             conn.commit(); conn.close(); st.rerun()
     conn.close()
 
-# --- COMPARATIVO (DETALHAMENTO TAXA POR TAXA) ---
+# --- COMPARATIVO (COM DOWNLOAD E CONTAGEM DE NOTAS) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Cálculo de Frete")
     f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
@@ -194,7 +186,6 @@ elif menu == "💰 Comparativo":
                     sigla = df_cid_ref[df_cid_ref.iloc[:,0].astype(str).str.upper() == cidade_nf].iloc[0, 2]
                     precos = df_tab[df_tab.iloc[:,2] == sigla].iloc[0]
                     
-                    # Frete Peso
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
                         u_max, u_col = f['max'], f['col']
@@ -209,53 +200,64 @@ elif menu == "💰 Comparativo":
                     v_gris = max(valor_nf * (gv("Gris %")), gv("Gris Min"))
                     v_emex = max(valor_nf * (gv("Emex %")), gv("Emex Min"))
                     v_pedagio = math.ceil(peso_nf / 100) * gv("Pedagio")
-                    
-                    # TAXAS INDIVIDUAIS PARA O DETALHAMENTO
                     t_tas = gv("TAS"); t_ctrc = gv("CTRC"); t_trt = gv("TRT"); t_tda = gv("TDA"); t_sec = gv("SEC-CAT")
                     
-                    nf['VALOR_SISTEMA'] = f_peso + v_adv + v_gris + v_emex + v_pedagio + t_tas + t_ctrc + t_trt + t_tda + t_sec
-                    
-                    # MEMÓRIA CONSTRUIDA TAXA A TAXA
-                    nf['MEMORIA_CALCULO'] = (f"Frete Peso: R$ {f_peso:.2f}\n"
-                                            f"Ad Valorem: R$ {v_adv:.2f}\n"
-                                            f"Gris: R$ {v_gris:.2f}\n"
-                                            f"Emex: R$ {v_emex:.2f}\n"
-                                            f"Pedágio: R$ {v_pedagio:.2f}\n"
-                                            f"TAS: R$ {t_tas:.2f}\n"
-                                            f"CTRC: R$ {t_ctrc:.2f}\n"
-                                            f"TRT: R$ {t_trt:.2f}\n"
-                                            f"TDA: R$ {t_tda:.2f}\n"
-                                            f"SEC-CAT: R$ {t_sec:.2f}")
-                except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro no cálculo"
+                    total_nf = f_peso + v_adv + v_gris + v_emex + v_pedagio + t_tas + t_ctrc + t_trt + t_tda + t_sec
+                    nf['VALOR_SISTEMA'] = total_nf
+                    nf['MEMORIA_CALCULO'] = (f"Peso: R$ {f_peso:.2f} | AdVal: R$ {v_adv:.2f} | Gris: R$ {v_gris:.2f} | "
+                                            f"Pedágio: R$ {v_pedagio:.2f} | Fixas: R$ {(t_tas+t_ctrc+t_trt+t_tda+t_sec):.2f}")
+                except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro"
                 
                 res_final.append(nf.to_dict())
-                uf = nf.iloc[3]
-                resumo_uf[uf] = resumo_uf.get(uf, 0) + nf['VALOR_SISTEMA']
+                uf = nf.iloc[3]; resumo_uf[uf] = resumo_uf.get(uf, 0) + nf['VALOR_SISTEMA']
             
             df_res = pd.DataFrame(res_final)
             res_j = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
-            # Salva orientando por records para facilitar a leitura no Dashboard
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
                          (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(orient='records'), json.dumps(res_j)))
-            conn.commit(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
+            conn.commit()
+            
+            # --- NOVIDADE: SUCESSO E DOWNLOAD ---
+            st.success(f"✅ Cálculo finalizado com sucesso! **{len(df_res)} Notas Processadas.**")
+            
+            # Preparar Excel para Download
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_res.to_excel(writer, index=False, sheet_name='Cotacao')
+            
+            st.download_button(
+                label="📥 Baixar Planilha de Resultados",
+                data=output.getvalue(),
+                file_name=f"Resultado_Frete_{t_alvo}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            st.dataframe(df_res, use_container_width=True)
 
     st.markdown("### 📄 Histórico de Cotações")
     df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn)
     for _, row in df_h.iterrows():
-        with st.expander(f"🔽 {row['data_hora']} - {row['transportadora']} | R$ {row['total']:,.2f}"):
+        with st.expander(f"🔽 {row['data_hora']} - {row['transportadora']} | {row['qtd']} Notas | R$ {row['total']:,.2f}"):
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
-            if st.button("🗑️ Excluir Lote", key=f"del_{row['id']}"):
+            
+            c_del, c_down = st.columns([1, 1])
+            if c_del.button("🗑️ Excluir Lote", key=f"del_{row['id']}"):
                 conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); st.rerun()
+            
+            # Botão de download também no histórico
+            out_h = io.BytesIO()
+            with pd.ExcelWriter(out_h, engine='xlsxwriter') as writer:
+                df_det.to_excel(writer, index=False)
+            c_down.download_button("📥 Baixar este Lote", out_h.getvalue(), f"Lote_{row['id']}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"dl_{row['id']}")
+            
             st.divider()
             for idx, n_row in df_det.iterrows():
                 cn1, cn2, cn3 = st.columns([5, 2, 3])
                 cn1.write(f"📄 NF: {n_row.iloc[0]} - {n_row.iloc[2]}")
                 cn2.write(f"**R$ {n_row['VALOR_SISTEMA']:,.2f}**")
-                
                 key_v = f"v_{row['id']}_{idx}"
                 if cn3.button(f"👁️ Detalhar Cálculo", key=f"b_{key_v}"): 
                     st.session_state.view_details[key_v] = not st.session_state.view_details.get(key_v, False)
-                
                 if st.session_state.view_details.get(key_v, False): 
-                    st.text(n_row.get('MEMORIA_CALCULO', 'Sem dados'))
+                    st.info(n_row.get('MEMORIA_CALCULO', 'Sem dados'))
     conn.close()
