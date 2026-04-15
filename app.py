@@ -9,12 +9,10 @@ import math
 # 1. Configuração de Layout
 st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
 
-# CSS para melhorar a estética das métricas e containers
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; }
     [data-testid="stMetric"] { border: 1px solid #ddd; padding: 10px; border-radius: 8px; background-color: rgba(255,255,255,0.05); }
-    .stAlert { border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -33,7 +31,7 @@ def init_db():
 
 init_db()
 
-# Inicialização segura dos estados de sessão
+# Inicialização de estados de sessão para evitar erros de atributo
 if 'view_details' not in st.session_state: st.session_state.view_details = {}
 if 'edit_id' not in st.session_state: st.session_state.edit_id = None
 
@@ -52,7 +50,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (ESTILO B.I. COM CONTAGEM REAL DE NOTAS) ---
+# --- DASHBOARD (Lógica de BI: Contagem de Notas Reais) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -60,37 +58,37 @@ if menu == "📊 Dashboard":
     conn.close()
 
     if not df_h.empty:
-        # Abre todos os lotes para contar as notas individualmente
-        lista_notas = []
+        todas_notas = []
         for _, row in df_h.iterrows():
-            lote = pd.read_json(io.StringIO(row['detalhes_json']))
-            lote['Transportadora_BI'] = row['transportadora']
-            if 'UF' not in lote.columns: lote['UF'] = lote.iloc[:, 3]
-            lista_notas.append(lote)
+            notas_lote = pd.read_json(io.StringIO(row['detalhes_json']))
+            notas_lote['Transportadora_Ref'] = row['transportadora']
+            if 'UF' not in notas_lote.columns:
+                notas_lote['UF'] = notas_lote.iloc[:, 3]
+            todas_notas.append(notas_lote)
         
-        df_bi = pd.concat(lista_notas, ignore_index=True)
+        df_bi = pd.concat(todas_notas, ignore_index=True)
 
         st.markdown("### 🔍 Filtros Dinâmicos")
         f1, f2 = st.columns(2)
-        filtro_t = f1.multiselect("Transportadora", df_bi['Transportadora_BI'].unique())
+        filtro_t = f1.multiselect("Transportadora", df_bi['Transportadora_Ref'].unique())
         filtro_uf = f2.multiselect("Estado (UF)", sorted(df_bi['UF'].unique()))
         
-        df_f = df_bi.copy()
-        if filtro_t: df_f = df_f[df_f['Transportadora_BI'].isin(filtro_t)]
-        if filtro_uf: df_f = df_f[df_f['UF'].isin(filtro_uf)]
+        df_filtrado = df_bi.copy()
+        if filtro_t: df_filtrado = df_filtrado[df_filtrado['Transportadora_Ref'].isin(filtro_t)]
+        if filtro_uf: df_filtrado = df_filtrado[df_filtrado['UF'].isin(filtro_uf)]
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Cotado", f"R$ {df_f['VALOR_SISTEMA'].sum():,.2f}")
-        # Aqui a contagem reflete o número de Notas Fiscais, não de linhas do Dashboard
-        c2.metric("Notas Processadas", f"{len(df_f)}") 
-        c3.metric("Ticket Médio", f"R$ {df_f['VALOR_SISTEMA'].mean():,.2f}" if len(df_f) > 0 else "R$ 0,00")
+        c1.metric("Total Cotado", f"R$ {df_filtrado['VALOR_SISTEMA'].sum():,.2f}")
+        # Contagem baseada no número de registros (Notas Fiscais) e não nas UFs
+        c2.metric("Notas Processadas", f"{len(df_filtrado)}") 
+        c3.metric("Ticket Médio", f"R$ {df_filtrado['VALOR_SISTEMA'].mean():,.2f}" if len(df_filtrado) > 0 else "R$ 0,00")
 
-        if not df_f.empty:
-            st.subheader("📋 Consolidado por Estado")
-            pivot = df_f.pivot_table(index="UF", columns="Transportadora_BI", values="VALOR_SISTEMA", aggfunc="sum").fillna(0)
+        if not df_filtrado.empty:
+            st.subheader("📋 Resumo por Estado")
+            pivot = df_filtrado.pivot_table(index="UF", columns="Transportadora_Ref", values="VALOR_SISTEMA", aggfunc="sum").fillna(0)
             st.dataframe(pivot, use_container_width=True)
     else:
-        st.info("Realize um cálculo para ativar o Dashboard.")
+        st.info("Nenhuma cotação no banco de dados.")
 
 # --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
@@ -156,9 +154,6 @@ elif menu == "🚛 Transportadoras":
                 conn.commit(); conn.close()
                 st.session_state.edit_id = None; st.rerun()
 
-        if is_editing and st.button("❌ Cancelar"):
-            st.session_state.edit_id = None; st.rerun()
-
     st.markdown("### 📋 Transportadoras Cadastradas")
     conn = sqlite3.connect(DB_NAME)
     ts = pd.read_sql_query("SELECT id, nome FROM transportadoras", conn)
@@ -172,7 +167,7 @@ elif menu == "🚛 Transportadoras":
             conn.commit(); conn.close(); st.rerun()
     conn.close()
 
-# --- COMPARATIVO (RESULTADOS ORGANIZADOS) ---
+# --- COMPARATIVO (Memória de Cálculo Alinhada e Download) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Cálculo de Frete")
     f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
@@ -213,37 +208,38 @@ elif menu == "💰 Comparativo":
                     total_nf = f_peso + v_adv + v_gris + v_emex + v_pedagio + t_tas + t_ctrc + t_trt + t_tda + t_sec
                     nf['VALOR_SISTEMA'] = total_nf
                     
-                    # Detalhamento organizado com quebra de linha Markdown
+                    # Memória de cálculo formatada com quebras de linha limpas
                     nf['MEMORIA_CALCULO'] = (
-                        f"**Frete Peso:** R$ {f_peso:.2f}  \n"
-                        f"**Ad Valorem:** R$ {v_adv:.2f}  \n"
-                        f"**Gris:** R$ {v_gris:.2f}  \n"
-                        f"**Emex:** R$ {v_emex:.2f}  \n"
-                        f"**Pedágio:** R$ {v_pedagio:.2f}  \n"
-                        f"**TAS:** R$ {t_tas:.2f}  \n"
-                        f"**CTRC:** R$ {t_ctrc:.2f}  \n"
-                        f"**TRT:** R$ {t_trt:.2f}  \n"
-                        f"**TDA:** R$ {t_tda:.2f}  \n"
-                        f"**SEC-CAT:** R$ {t_sec:.2f}"
+                        f"Frete Peso: R$ {f_peso:.2f}\n"
+                        f"Ad Valorem: R$ {v_adv:.2f}\n"
+                        f"Gris      : R$ {v_gris:.2f}\n"
+                        f"Emex      : R$ {v_emex:.2f}\n"
+                        f"Pedágio   : R$ {v_pedagio:.2f}\n"
+                        f"TAS       : R$ {t_tas:.2f}\n"
+                        f"CTRC      : R$ {t_ctrc:.2f}\n"
+                        f"TRT       : R$ {t_trt:.2f}\n"
+                        f"TDA       : R$ {t_tda:.2f}\n"
+                        f"SEC-CAT   : R$ {t_sec:.2f}"
                     )
-                except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro de mapeamento."
+                except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro no cálculo desta nota."
                 
                 res_final.append(nf.to_dict())
                 uf = nf.iloc[3]; resumo_uf[uf] = resumo_uf.get(uf, 0) + nf['VALOR_SISTEMA']
             
             df_res = pd.DataFrame(res_final)
             res_j = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
+            
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
                          (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(orient='records'), json.dumps(res_j)))
             conn.commit()
             
-            st.success(f"✅ Cálculo finalizado! **{len(df_res)} Notas Processadas.**")
+            st.success(f"✅ Processamento concluído: **{len(df_res)} Notas Processadas**.")
             
-            # Botão de Download
+            # Botão de Download da Planilha
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_res.to_excel(writer, index=False)
-            st.download_button("📥 Baixar Planilha de Resultados", output.getvalue(), f"Frete_{t_alvo}.xlsx")
+            st.download_button("📥 Baixar Planilha de Resultados", output.getvalue(), f"Frete_{t_alvo}_{datetime.now().strftime('%d%m%Y')}.xlsx")
             
             st.dataframe(df_res, use_container_width=True)
 
@@ -253,14 +249,14 @@ elif menu == "💰 Comparativo":
         with st.expander(f"🔽 {row['data_hora']} - {row['transportadora']} | {row['qtd']} Notas | R$ {row['total']:,.2f}"):
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
             
-            c1, c2 = st.columns([1, 1])
-            if c1.button("🗑️ Excluir Lote", key=f"del_{row['id']}"):
+            c_del, c_down = st.columns([1, 1])
+            if c_del.button("🗑️ Excluir Lote", key=f"del_{row['id']}"):
                 conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); st.rerun()
             
             out_h = io.BytesIO()
             with pd.ExcelWriter(out_h, engine='xlsxwriter') as writer:
                 df_det.to_excel(writer, index=False)
-            c2.download_button("📥 Baixar este Lote", out_h.getvalue(), f"Lote_{row['id']}.xlsx", key=f"dl_{row['id']}")
+            c_down.download_button("📥 Baixar este Lote", out_h.getvalue(), f"Lote_{row['id']}.xlsx", key=f"dl_{row['id']}")
             
             st.divider()
             for idx, n_row in df_det.iterrows():
@@ -273,6 +269,6 @@ elif menu == "💰 Comparativo":
                     st.session_state.view_details[key_v] = not st.session_state.view_details.get(key_v, False)
                 
                 if st.session_state.view_details.get(key_v, False): 
-                    # Uso do st.markdown para renderizar o detalhamento em lista
-                    st.markdown(n_row.get('MEMORIA_CALCULO', 'Sem dados'))
+                    # Uso de st.code para garantir alinhamento perfeito e quebra de linhas
+                    st.code(n_row.get('MEMORIA_CALCULO', 'Sem detalhes disponíveis'), language="text")
     conn.close()
