@@ -6,26 +6,15 @@ import io
 from datetime import datetime
 import math
 
-# 1. Layout e CSS (BI Sem Transparência)
+# 1. Layout e CSS
 st.set_page_config(page_title="Comparativo de Tabelas", layout="wide")
 
 st.markdown("""
     <style>
     .block-container { padding-top: 0.5rem; }
-    [data-testid="stMetric"] {
-        background-color: #FFFFFF !important;
-        border: 1px solid #D1D1D1;
-        padding: 15px;
-        border-radius: 10px;
-    }
-    [data-testid="stMetricLabel"] p {
-        color: #000000 !important;
-        font-weight: bold !important;
-        opacity: 1 !important;
-    }
-    [data-testid="stMetricValue"] div {
-        color: #1E88E5 !important;
-    }
+    [data-testid="stMetric"] { background-color: #FFFFFF !important; border: 1px solid #D1D1D1; padding: 15px; border-radius: 10px; }
+    [data-testid="stMetricLabel"] p { color: #000000 !important; font-weight: bold !important; }
+    [data-testid="stMetricValue"] div { color: #1E88E5 !important; }
     [data-testid="stSidebar"] { background-color: #F8F9FA !important; }
     [data-testid="stSidebar"] * { color: #000000 !important; font-weight: 600; }
     </style>
@@ -62,7 +51,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("NAVEGAÇÃO", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (COM FILTROS DE UF E TRANSPORTADORA) ---
+# --- DASHBOARD (BI COM FILTROS) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -70,7 +59,6 @@ if menu == "📊 Dashboard":
     conn.close()
 
     if not df_h.empty:
-        # Extrair todos os dados de UF para o filtro
         resumos_base = []
         for r in df_h['estado_resumo']: resumos_base.extend(json.loads(r))
         df_base_filtros = pd.DataFrame(resumos_base)
@@ -80,23 +68,18 @@ if menu == "📊 Dashboard":
         filtro_t = f1.multiselect("Filtrar Transportadora", df_h['transportadora'].unique())
         filtro_uf = f2.multiselect("Filtrar Estado (UF)", sorted(df_base_filtros['UF'].unique()))
         
-        # Lógica de Filtragem Dinâmica
         df_final_bi = df_base_filtros.copy()
-        if filtro_t:
-            df_final_bi = df_final_bi[df_final_bi['Transportadora'].isin(filtro_t)]
-        if filtro_uf:
-            df_final_bi = df_final_bi[df_final_bi['UF'].isin(filtro_uf)]
+        if filtro_t: df_final_bi = df_final_bi[df_final_bi['Transportadora'].isin(filtro_t)]
+        if filtro_uf: df_final_bi = df_final_bi[df_final_bi['UF'].isin(filtro_uf)]
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {df_final_bi['Valor'].sum():,.2f}")
-        c2.metric("Notas Processadas", f"{len(df_final_bi)}") # Baseado na contagem do consolidado
+        c2.metric("Notas Processadas", f"{len(df_final_bi)}")
         c3.metric("Ticket Médio", f"R$ {df_final_bi['Valor'].mean():,.2f}" if not df_final_bi.empty else "0.00")
 
         st.subheader("📋 Consolidado por UF")
         if not df_final_bi.empty:
             st.dataframe(df_final_bi.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0), use_container_width=True)
-        else:
-            st.info("Nenhum dado encontrado para os filtros selecionados.")
 
 # --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
@@ -121,7 +104,7 @@ elif menu == "🚛 Transportadoras":
                 co = r[2].selectbox(f"Coluna Tabela", cols_t, key=f"co{i}")
                 faixas.append({"min": mi, "max": ma, "col": co})
             
-            st.markdown("### 💰 Taxas JAMEF")
+            st.markdown("### 💰 Taxas Adicionais")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
             m_taxas = {}
             t_cols = st.columns(3)
@@ -147,7 +130,7 @@ elif menu == "🚛 Transportadoras":
             conn.commit(); conn.close(); st.rerun()
     conn.close()
 
-# --- COMPARATIVO (COM EXCLUSÃO E CONTAGEM DE QTD) ---
+# --- COMPARATIVO (COM LÓGICA DE CÁLCULO CORRIGIDA) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Comparativo")
     f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
@@ -157,7 +140,7 @@ elif menu == "💰 Comparativo":
     
     if not ts.empty:
         t_alvo = st.selectbox("Transportadora", ts['nome'].tolist())
-        if f_base and st.button("🚀 Calcular Cotação Jamef"):
+        if f_base and st.button("🚀 Calcular Cotação"):
             df_b = pd.read_excel(f_base).fillna(0)
             t_row = ts[ts['nome'] == t_alvo].iloc[0]
             df_tab = pd.read_json(io.StringIO(t_row['tabela_json']))
@@ -173,23 +156,32 @@ elif menu == "💰 Comparativo":
                     sigla = df_cid_ref[df_cid_ref.iloc[:,0].astype(str).str.upper() == cidade_nf].iloc[0, 2]
                     precos = df_tab[df_tab.iloc[:,2] == sigla].iloc[0]
                     
-                    f_peso = 0.0; ultima_faixa_peso = 0; coluna_ultima_faixa = ""; dentro_da_faixa = False
+                    # 1. Frete Peso
+                    f_peso = 0.0; ultima_max = 0; col_u = ""; dentro = False
                     for f in mapa['faixas']:
-                        ultima_faixa_peso = f['max']; coluna_ultima_faixa = f['col']
+                        ultima_max = f['max']; col_u = f['col']
                         if peso_nf <= f['max'] and f['col'] != "Não mapear":
-                            f_peso = float(precos[f['col']]); dentro_da_faixa = True; break
-                    if not dentro_da_faixa and mapa.get('kg_extra') != "Não mapear":
-                        f_peso = float(precos[coluna_ultima_faixa]) + ((peso_nf - ultima_faixa_peso) * float(precos[mapa['kg_extra']]))
+                            f_peso = float(precos[f['col']]); dentro = True; break
+                    if not dentro and mapa.get('kg_extra') != "Não mapear":
+                        f_peso = float(precos[col_u]) + ((peso_nf - ultima_max) * float(precos[mapa['kg_extra']]))
                     
-                    def get_v(n): return float(precos[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
-                    v_adv = max(valor_nf * (get_v("Ad Valorem %")/100), get_v("Ad Valorem Min"))
-                    v_emex = max(valor_nf * (get_v("Emex %")/100), get_v("Emex Min"))
-                    v_pedagio = math.ceil(peso_nf / 100) * get_v("Pedagio")
-                    subtotal = f_peso + v_adv + get_v("TAS") + get_v("CTRC") + v_pedagio + get_v("TRT") + get_v("TDA") + get_v("SEC-CAT")
-                    v_gris = max(subtotal * (get_v("Gris %")/100), get_v("Gris Min"))
-                    nf['VALOR_SISTEMA'] = subtotal + v_gris + v_emex
+                    # 2. Taxas
+                    def gv(n): return float(precos[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
+                    
+                    v_adv = max(valor_nf * (gv("Ad Valorem %")/100), gv("Ad Valorem Min"))
+                    v_gris = max(valor_nf * (gv("Gris %")/100), gv("Gris Min"))
+                    v_emex = max(valor_nf * (gv("Emex %")/100), gv("Emex Min"))
+                    v_pedagio = math.ceil(peso_nf / 100) * gv("Pedagio")
+                    
+                    # Soma final exata conforme análise das planilhas
+                    total_nota = f_peso + v_adv + v_gris + v_emex + v_pedagio + \
+                                 gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
+                    
+                    nf['VALOR_SISTEMA'] = total_nota
                 except: nf['VALOR_SISTEMA'] = 0.0
-                res_final.append(nf.to_dict()); resumo_uf[nf.iloc[3]] = resumo_uf.get(nf.iloc[3], 0) + nf['VALOR_SISTEMA']
+                res_final.append(nf.to_dict())
+                uf_atual = nf.iloc[3]
+                resumo_uf[uf_atual] = resumo_uf.get(uf_atual, 0) + nf['VALOR_SISTEMA']
             
             df_res = pd.DataFrame(res_final)
             res_json = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
@@ -202,23 +194,18 @@ elif menu == "💰 Comparativo":
     for _, row in df_h.iterrows():
         c1, c2, c3, c4 = st.columns([3, 2, 2, 3])
         c1.write(f"📅 {row['data_hora']} - **{row['transportadora']}**")
-        c2.write(f"📦 Qtd: **{row['qtd']}**") # Exibição da quantidade
+        c2.write(f"📦 Qtd: **{row['qtd']}**")
         c3.write(f"R$ {row['total']:,.2f}")
+        btns = c4.columns(2)
         
-        # Botões de Ação
-        btn_cols = c4.columns(2)
-        
-        # Download
+        # Download Excel
         detalhes = pd.read_sql_query(f"SELECT detalhes_json FROM cotacoes WHERE id={row['id']}", conn).iloc[0]['detalhes_json']
-        df_download = pd.read_json(io.StringIO(detalhes))
+        df_dl = pd.read_json(io.StringIO(detalhes))
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_download.to_excel(writer, index=False)
-        btn_cols[0].download_button("📂 Excel", output.getvalue(), f"cotacao_{row['id']}.xlsx", key=f"dl_{row['id']}")
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer: df_dl.to_excel(writer, index=False)
+        btns[0].download_button("📂 Excel", output.getvalue(), f"cotacao_{row['id']}.xlsx", key=f"dl_{row['id']}")
         
-        # Excluir Cotação
-        if btn_cols[1].button("🗑️ Excluir", key=f"del_c_{row['id']}"):
+        if btns[1].button("🗑️ Excluir", key=f"del_c_{row['id']}"):
             conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],))
             conn.commit(); conn.close(); st.rerun()
-            
     conn.close()
