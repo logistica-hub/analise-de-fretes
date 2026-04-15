@@ -6,11 +6,12 @@ import io
 from datetime import datetime
 import math
 
-# 1. Configuração de Estilo (BI Nítido)
+# 1. Layout e CSS (BI Sem Transparência)
 st.set_page_config(page_title="Comparativo de Tabelas", layout="wide")
 
 st.markdown("""
     <style>
+    .block-container { padding-top: 0.5rem; }
     [data-testid="stMetric"] {
         background-color: #FFFFFF !important;
         border: 1px solid #D1D1D1;
@@ -26,10 +27,11 @@ st.markdown("""
         color: #1E88E5 !important;
     }
     [data-testid="stSidebar"] { background-color: #F8F9FA !important; }
+    [data-testid="stSidebar"] * { color: #000000 !important; font-weight: 600; }
     </style>
     """, unsafe_allow_html=True)
 
-DB_NAME = 'comparativo_v20.db'
+DB_NAME = 'comparativo_v19.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -44,7 +46,7 @@ def init_db():
 
 init_db()
 
-# --- SIDEBAR (Logo e Navegação) ---
+# --- SIDEBAR (LOGO E NAVEGAÇÃO VOLTARAM) ---
 with st.sidebar:
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
@@ -60,7 +62,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("NAVEGAÇÃO", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD ---
+# --- DASHBOARD (VISUAL CORRIGIDO) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -76,12 +78,14 @@ if menu == "📊 Dashboard":
         c1.metric("Total Cotado", f"R$ {df_full['Valor'].sum():,.2f}")
         c2.metric("Notas Processadas", f"{int(df_h['qtd'].sum())}")
         c3.metric("Ticket Médio", f"R$ {df_full['Valor'].mean():,.2f}")
+
+        st.subheader("📋 Consolidado por UF")
         st.dataframe(df_full.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0), use_container_width=True)
 
-# --- TRANSPORTADORAS (MAPEAMENTO COMPLETO REESTABELECIDO) ---
+# --- TRANSPORTADORAS (MAPEAMENTO COMPLETO VOLTOU) ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
-    with st.expander("📝 Configurar Tabela de Frete", expanded=True):
+    with st.expander("📝 Configurar Nova Tabela JAMEF"):
         t_nome = st.text_input("Nome da Empresa").upper()
         u1, u2 = st.columns(2)
         with u1: f_tab = st.file_uploader("Excel Tabela", type=["xlsx"])
@@ -91,9 +95,11 @@ elif menu == "🚛 Transportadoras":
             df_t = pd.read_excel(f_tab).fillna(0)
             cols_t = ["Não mapear"] + list(df_t.columns)
             
-            st.markdown("### ⚖️ Faixas de Peso e Kg Adicional")
-            col_adicional = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t)
-            n_f = st.number_input("Quantidade de Faixas", 1, 50, 6)
+            st.markdown("### ⚖️ Faixas de Peso")
+            # Adicionado campo de Kg Adicional
+            col_kg_extra = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t)
+            
+            n_f = st.number_input("Qtd Faixas", 1, 50, 6)
             faixas = []
             for i in range(int(n_f)):
                 r = st.columns(3)
@@ -102,7 +108,7 @@ elif menu == "🚛 Transportadoras":
                 co = r[2].selectbox(f"Coluna Tabela", cols_t, key=f"co{i}")
                 faixas.append({"min": mi, "max": ma, "col": co})
             
-            st.markdown("### 💰 Taxas e Pedágio")
+            st.markdown("### 💰 Taxas JAMEF")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min"]
             m_taxas = {}
             t_cols = st.columns(3)
@@ -110,25 +116,26 @@ elif menu == "🚛 Transportadoras":
                 with t_cols[idx % 3]:
                     m_taxas[tx] = st.selectbox(tx, cols_t, key=f"tx_{tx}")
 
-            if st.button("💾 Salvar Transportadora"):
-                mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_adicional}
+            if st.button("💾 Salvar Configuração"):
+                # Salva o kg_extra no mapa
+                mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra}
                 conn = sqlite3.connect(DB_NAME)
                 conn.execute("INSERT INTO transportadoras (nome, tabela_json, cidades_json, mapeamento_json) VALUES (?,?,?,?)",
                              (t_nome, df_t.to_json(), pd.read_excel(f_cid).to_json(), json.dumps(mapa)))
-                conn.commit(); st.success("Salvo!"); st.rerun()
+                conn.commit(); st.rerun()
 
-# --- COMPARATIVO (CÁLCULO JAMEF COM KG ADICIONAL E PEDÁGIO FRACIONADO) ---
+# --- COMPARATIVO (MOTOR DE CÁLCULO JAMEF) ---
 elif menu == "💰 Comparativo":
-    st.title("💰 Comparativo de Fretes")
-    f_base = st.file_uploader("📥 Subir Planilha Base", type=["xlsx"])
+    st.title("💰 Novo Comparativo")
+    f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
     
     if f_base:
         df_b = pd.read_excel(f_base).fillna(0)
         conn = sqlite3.connect(DB_NAME); ts = pd.read_sql_query("SELECT * FROM transportadoras", conn); conn.close()
         
         if not ts.empty:
-            t_alvo = st.selectbox("Selecione a Transportadora", ts['nome'].tolist())
-            if st.button("🚀 Calcular"):
+            t_alvo = st.selectbox("Transportadora", ts['nome'].tolist())
+            if st.button("🚀 Calcular Cotação Jamef"):
                 t_row = ts[ts['nome'] == t_alvo].iloc[0]
                 df_tab = pd.read_json(io.StringIO(t_row['tabela_json']))
                 df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
@@ -146,37 +153,51 @@ elif menu == "💰 Comparativo":
                         sigla = df_cid_ref[df_cid_ref.iloc[:,0].astype(str).str.upper() == cidade_nf].iloc[0, 2]
                         precos = df_tab[df_tab.iloc[:,2] == sigla].iloc[0]
                         
-                        # 1. Frete Peso + Kg Adicional
+                        # 1. Frete Peso com Lógica de Kg Adicional
                         f_peso = 0.0
-                        max_faixa = 0
-                        col_max = ""
+                        ultima_faixa_peso = 0
+                        coluna_ultima_faixa = ""
+                        dentro_da_faixa = False
+
                         for f in mapa['faixas']:
-                            max_faixa = f['max']
-                            col_max = f['col']
+                            ultima_faixa_peso = f['max']
+                            coluna_ultima_faixa = f['col']
                             if peso_nf <= f['max'] and f['col'] != "Não mapear":
-                                f_peso = float(precos[f['col']]); break
+                                f_peso = float(precos[f['col']])
+                                dentro_da_faixa = True
+                                break
                         
-                        if peso_nf > max_faixa and mapa.get('kg_extra') != "Não mapear":
-                            f_peso = float(precos[col_max]) + ((peso_nf - max_faixa) * float(precos[mapa['kg_extra']]))
+                        # Se ultrapassar a última faixa, calcula excedente
+                        if not dentro_da_faixa and mapa.get('kg_extra') != "Não mapear":
+                            base_peso = float(precos[coluna_ultima_faixa])
+                            valor_kg_extra = float(precos[mapa['kg_extra']])
+                            f_peso = base_peso + ((peso_nf - ultima_faixa_peso) * valor_kg_extra)
                         
-                        # 2. Taxas
-                        def g(n): return float(precos[mapa['taxas'][n]]) if mapa['taxas'][n] != "Não mapear" else 0.0
+                        # 2. Taxas sobre NF (Ad Valorem e Emex)
+                        def get_v(n): return float(precos[mapa['taxas'][n]]) if mapa['taxas'][n] != "Não mapear" else 0.0
                         
-                        v_adv = max(valor_nf * (g("Ad Valorem %")/100), g("Ad Valorem Min"))
-                        v_emex = max(valor_nf * (g("Emex %")/100), g("Emex Min"))
-                        v_tas, v_ctrc = g("TAS"), g("CTRC")
+                        v_adv = max(valor_nf * (get_v("Ad Valorem %")/100), get_v("Ad Valorem Min"))
+                        v_emex = max(valor_nf * (get_v("Emex %")/100), get_v("Emex Min"))
                         
-                        # Pedágio (fração de 100kg)
-                        v_pedagio = math.ceil(peso_nf / 100) * g("Pedagio")
+                        # 3. Taxas Fixas e Pedágio
+                        v_tas = get_v("TAS")
+                        v_ctrc = get_v("CTRC")
+                        v_pedagio = math.ceil(peso_nf / 100) * get_v("Pedagio")
                         
-                        # Gris (sobre o frete)
+                        # 4. GRIS (Sobre Frete Peso + Taxas)
                         subtotal = f_peso + v_adv + v_tas + v_ctrc + v_pedagio
-                        v_gris = max(subtotal * (g("Gris %")/100), g("Gris Min"))
+                        v_gris = max(subtotal * (get_v("Gris %")/100), get_v("Gris Min"))
                         
-                        nf['VALOR_SISTEMA'] = subtotal + v_gris + v_emex
+                        v_total = subtotal + v_gris + v_emex
+                        nf['VALOR_SISTEMA'] = v_total
                     except: nf['VALOR_SISTEMA'] = 0.0
                     
                     res_final.append(nf.to_dict())
                     resumo_uf[nf.iloc[3]] = resumo_uf.get(nf.iloc[3], 0) + nf['VALOR_SISTEMA']
 
-                st.success("Calculado!"); st.dataframe(pd.DataFrame(res_final))
+                df_res = pd.DataFrame(res_final)
+                res_json = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
+                conn = sqlite3.connect(DB_NAME)
+                conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
+                             (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(), json.dumps(res_json)))
+                conn.commit(); conn.close(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
