@@ -46,7 +46,7 @@ def init_db():
 
 init_db()
 
-# --- SIDEBAR (LOGO E NAVEGAÇÃO) ---
+# --- SIDEBAR ---
 with st.sidebar:
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
@@ -62,7 +62,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("NAVEGAÇÃO", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (COM FILTROS) ---
+# --- DASHBOARD (COM FILTROS DE UF E TRANSPORTADORA) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -70,28 +70,35 @@ if menu == "📊 Dashboard":
     conn.close()
 
     if not df_h.empty:
-        # Filtros no Topo
-        st.markdown("### 🔍 Filtros")
-        f_cols = st.columns(2)
-        filtro_t = f_cols[0].multiselect("Transportadora", df_h['transportadora'].unique())
-        
-        df_filtrado = df_h.copy()
-        if filtro_t:
-            df_filtrado = df_filtrado[df_filtrado['transportadora'].isin(filtro_t)]
+        # Extrair todos os dados de UF para o filtro
+        resumos_base = []
+        for r in df_h['estado_resumo']: resumos_base.extend(json.loads(r))
+        df_base_filtros = pd.DataFrame(resumos_base)
 
-        resumos = []
-        for r in df_filtrado['estado_resumo']: resumos.extend(json.loads(r))
-        df_full = pd.DataFrame(resumos)
+        st.markdown("### 🔍 Filtros do BI")
+        f1, f2 = st.columns(2)
+        filtro_t = f1.multiselect("Filtrar Transportadora", df_h['transportadora'].unique())
+        filtro_uf = f2.multiselect("Filtrar Estado (UF)", sorted(df_base_filtros['UF'].unique()))
         
+        # Lógica de Filtragem Dinâmica
+        df_final_bi = df_base_filtros.copy()
+        if filtro_t:
+            df_final_bi = df_final_bi[df_final_bi['Transportadora'].isin(filtro_t)]
+        if filtro_uf:
+            df_final_bi = df_final_bi[df_final_bi['UF'].isin(filtro_uf)]
+
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Cotado", f"R$ {df_full['Valor'].sum():,.2f}")
-        c2.metric("Notas Processadas", f"{int(df_filtrado['qtd'].sum())}")
-        c3.metric("Ticket Médio", f"R$ {df_full['Valor'].mean():,.2f}")
+        c1.metric("Total Cotado", f"R$ {df_final_bi['Valor'].sum():,.2f}")
+        c2.metric("Notas Processadas", f"{len(df_final_bi)}") # Baseado na contagem do consolidado
+        c3.metric("Ticket Médio", f"R$ {df_final_bi['Valor'].mean():,.2f}" if not df_final_bi.empty else "0.00")
 
         st.subheader("📋 Consolidado por UF")
-        st.dataframe(df_full.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0), use_container_width=True)
+        if not df_final_bi.empty:
+            st.dataframe(df_final_bi.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0), use_container_width=True)
+        else:
+            st.info("Nenhum dado encontrado para os filtros selecionados.")
 
-# --- TRANSPORTADORAS (LISTAGEM, EDIÇÃO E EXCLUSÃO) ---
+# --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     with st.expander("📝 Configurar Nova Tabela JAMEF"):
@@ -135,12 +142,12 @@ elif menu == "🚛 Transportadoras":
     for idx, row in ts.iterrows():
         c1, c2 = st.columns([8, 2])
         c1.write(f"**{row['nome']}**")
-        if c2.button("🗑️ Excluir", key=f"del_{row['id']}"):
+        if c2.button("🗑️ Excluir", key=f"del_t_{row['id']}"):
             conn.execute("DELETE FROM transportadoras WHERE id=?", (row['id'],))
             conn.commit(); conn.close(); st.rerun()
     conn.close()
 
-# --- COMPARATIVO (LISTAGEM E DOWNLOAD) ---
+# --- COMPARATIVO (COM EXCLUSÃO E CONTAGEM DE QTD) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Comparativo")
     f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
@@ -191,16 +198,27 @@ elif menu == "💰 Comparativo":
             conn.commit(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
 
     st.markdown("### 📄 Histórico de Cotações")
-    df_h = pd.read_sql_query("SELECT id, data_hora, transportadora, total FROM cotacoes ORDER BY id DESC", conn)
+    df_h = pd.read_sql_query("SELECT id, data_hora, transportadora, total, qtd FROM cotacoes ORDER BY id DESC", conn)
     for _, row in df_h.iterrows():
-        c1, c2, c3 = st.columns([4, 4, 2])
+        c1, c2, c3, c4 = st.columns([3, 2, 2, 3])
         c1.write(f"📅 {row['data_hora']} - **{row['transportadora']}**")
-        c2.write(f"R$ {row['total']:,.2f}")
-        # Botão Download
+        c2.write(f"📦 Qtd: **{row['qtd']}**") # Exibição da quantidade
+        c3.write(f"R$ {row['total']:,.2f}")
+        
+        # Botões de Ação
+        btn_cols = c4.columns(2)
+        
+        # Download
         detalhes = pd.read_sql_query(f"SELECT detalhes_json FROM cotacoes WHERE id={row['id']}", conn).iloc[0]['detalhes_json']
         df_download = pd.read_json(io.StringIO(detalhes))
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_download.to_excel(writer, index=False)
-        c3.download_button("📂 Excel", output.getvalue(), f"cotacao_{row['id']}.xlsx", key=f"dl_{row['id']}")
+        btn_cols[0].download_button("📂 Excel", output.getvalue(), f"cotacao_{row['id']}.xlsx", key=f"dl_{row['id']}")
+        
+        # Excluir Cotação
+        if btn_cols[1].button("🗑️ Excluir", key=f"del_c_{row['id']}"):
+            conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],))
+            conn.commit(); conn.close(); st.rerun()
+            
     conn.close()
