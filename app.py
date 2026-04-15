@@ -7,7 +7,7 @@ from datetime import datetime
 import math
 
 # 1. Layout e CSS
-st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
+st.set_page_config(page_title="Comparativo de Tabelas", layout="wide")
 
 st.markdown("""
     <style>
@@ -35,6 +35,10 @@ def init_db():
 
 init_db()
 
+# Inicialização de estados
+if 'edit_id' not in st.session_state: st.session_state.edit_id = None
+if 'view_details' not in st.session_state: st.session_state.view_details = {}
+
 # --- SIDEBAR ---
 with st.sidebar:
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
@@ -51,7 +55,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("NAVEGAÇÃO", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (CORREÇÃO DE VALOR FIXO) ---
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -60,14 +64,9 @@ if menu == "📊 Dashboard":
 
     if not df_h.empty:
         resumos_all = []
-        # Importante: Iteramos sobre as cotações para construir o DataFrame de BI
         for _, row in df_h.iterrows():
             items = json.loads(row['estado_resumo'])
-            # Adicionamos o ID da cotação para garantir contagem única se necessário
-            for i in items:
-                i['id_cotacao'] = row['id']
             resumos_all.extend(items)
-        
         df_base_filtros = pd.DataFrame(resumos_all)
 
         st.markdown("### 🔍 Filtros do BI")
@@ -81,36 +80,34 @@ if menu == "📊 Dashboard":
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {df_final_bi['Valor'].sum():,.2f}")
-        
-        # QUANTIDADE DINÂMICA: Agora baseada no banco de dados filtrado
-        qtd_total = df_h[df_h['transportadora'].isin(filtro_t)]['qtd'].sum() if filtro_t else df_h['qtd'].sum()
-        c2.metric("Notas Processadas", f"{int(qtd_total)}") 
-        
+        # Notas processadas agora conta as linhas do detalhamento filtrado
+        c2.metric("Notas Processadas", f"{len(df_final_bi)}") 
         c3.metric("Ticket Médio", f"R$ {df_final_bi['Valor'].mean():,.2f}" if not df_final_bi.empty else "R$ 0.00")
 
         st.subheader("📋 Consolidado por UF")
         if not df_final_bi.empty:
             st.dataframe(df_final_bi.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0), use_container_width=True)
 
-# --- TRANSPORTADORAS (CORREÇÃO DO VALUEERROR NA EDIÇÃO) ---
+# --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     
-    if 'edit_id' not in st.session_state: st.session_state.edit_id = None
+    # Abrir expander se estiver em modo edição
+    is_editing = st.session_state.edit_id is not None
     
-    with st.expander("📝 Configurar Tabela JAMEF", expanded=st.session_state.edit_id is not None):
+    with st.expander("📝 Configurar Tabela JAMEF", expanded=is_editing):
         edit_data = None
-        mapa_edit = {}
-        if st.session_state.edit_id:
+        mapa_edit = {"faixas": [], "taxas": {}, "kg_extra": "Não mapear"}
+        
+        if is_editing:
             conn = sqlite3.connect(DB_NAME)
-            query = f"SELECT * FROM transportadoras WHERE id={st.session_state.edit_id}"
-            res = pd.read_sql_query(query, conn)
+            res = pd.read_sql_query(f"SELECT * FROM transportadoras WHERE id={st.session_state.edit_id}", conn)
             if not res.empty:
                 edit_data = res.iloc[0]
                 mapa_edit = json.loads(edit_data['mapeamento_json'])
             conn.close()
 
-        t_nome = st.text_input("Nome da Empresa", value=str(edit_data['nome']) if edit_data is not None else "").upper()
+        t_nome = st.text_input("Nome da Empresa", value=edit_data['nome'] if edit_data is not None else "").upper()
         u1, u2 = st.columns(2)
         with u1: f_tab = st.file_uploader("Excel Tabela", type=["xlsx"])
         with u2: f_cid = st.file_uploader("Excel Cidades", type=["xlsx"])
@@ -120,10 +117,8 @@ elif menu == "🚛 Transportadoras":
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             
             st.markdown("### ⚖️ Faixas de Peso")
-            # Correção do ValueError: convertendo para string e garantindo comparação escalar
-            saved_kg = str(mapa_edit.get('kg_extra', "Não mapear"))
-            idx_kg = cols_t.index(saved_kg) if saved_kg in cols_t else 0
-            col_kg_extra = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t, index=idx_kg)
+            sel_kg = str(mapa_edit.get('kg_extra', "Não mapear"))
+            col_kg_extra = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t, index=cols_t.index(sel_kg) if sel_kg in cols_t else 0)
             
             n_f_val = len(mapa_edit.get('faixas', [])) if edit_data else 6
             n_f = st.number_input("Qtd Faixas", 1, 50, n_f_val if n_f_val > 0 else 6)
@@ -131,21 +126,16 @@ elif menu == "🚛 Transportadoras":
             for i in range(int(n_f)):
                 r = st.columns(3)
                 f_data = mapa_edit['faixas'][i] if edit_data and i < len(mapa_edit['faixas']) else {}
-                
-                v_mi = float(f_data.get('min', 0.0))
-                v_ma = float(f_data.get('max', 0.0))
-                v_co = str(f_data.get('col', "Não mapear"))
-                
                 faixas.append({
-                    "min": r[0].number_input(f"De (kg)", value=v_mi, key=f"mi{i}"),
-                    "max": r[1].number_input(f"Até (kg)", value=v_ma, key=f"ma{i}"),
-                    "col": r[2].selectbox(f"Coluna Tabela", cols_t, index=cols_t.index(v_co) if v_co in cols_t else 0, key=f"co{i}")
+                    "min": r[0].number_input(f"De (kg)", value=float(f_data.get('min', 0.0)), key=f"mi{i}"),
+                    "max": r[1].number_input(f"Até (kg)", value=float(f_data.get('max', 0.0)), key=f"ma{i}"),
+                    "col": r[2].selectbox(f"Coluna Tabela", cols_t, index=cols_t.index(str(f_data.get('col', "Não mapear"))) if str(f_data.get('col', "Não mapear")) in cols_t else 0, key=f"co{i}")
                 })
             
             st.markdown("### 💰 Taxas Adicionais")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
             m_taxas = {}
-            t_cols = st.columns(3) # Layout Lado a Lado preservado
+            t_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
                 with t_cols[idx % 3]:
                     saved_tx = str(mapa_edit.get('taxas', {}).get(tx, "Não mapear"))
@@ -163,6 +153,10 @@ elif menu == "🚛 Transportadoras":
                 conn.commit(); conn.close()
                 st.session_state.edit_id = None
                 st.rerun()
+        
+        if st.button("❌ Cancelar Edição") and is_editing:
+            st.session_state.edit_id = None
+            st.rerun()
 
     st.markdown("### 📋 Transportadoras Cadastradas")
     conn = sqlite3.connect(DB_NAME)
@@ -170,10 +164,10 @@ elif menu == "🚛 Transportadoras":
     for _, row in ts.iterrows():
         c1, c2, c3 = st.columns([7, 1.5, 1.5])
         c1.write(f"**{row['nome']}**")
-        if c2.button("✏️ Editar", key=f"ed_t_{row['id']}"):
+        if c2.button("✏️ Editar", key=f"btn_ed_{row['id']}"):
             st.session_state.edit_id = row['id']
             st.rerun()
-        if c3.button("🗑️ Excluir", key=f"del_t_{row['id']}"):
+        if c3.button("🗑️ Excluir", key=f"btn_del_{row['id']}"):
             conn.execute("DELETE FROM transportadoras WHERE id=?", (row['id'],))
             conn.commit(); conn.close(); st.rerun()
     conn.close()
@@ -220,9 +214,8 @@ elif menu == "💰 Comparativo":
                     v_fixas = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
                     
                     nf['VALOR_SISTEMA'] = f_peso + v_adv + v_gris + v_emex + v_pedagio + v_fixas
-                    nf['MEMORIA_CALCULO'] = f"Peso: {f_peso:.2f} | AdVal: {v_adv:.2f} | Gris: {v_gris:.2f} | Pedágio: {v_pedagio:.2f} | Fixas: {v_fixas:.2f}"
+                    nf['MEMORIA_CALCULO'] = f"**Frete Peso:** {f_peso:.2f}\n\n**AdVal:** {v_adv:.2f} | **Gris:** {v_gris:.2f}\n\n**Pedágio:** {v_pedagio:.2f} | **Taxas Fixas:** {v_fixas:.2f}"
                 except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro"
-                
                 res_final.append(nf.to_dict()); uf = nf.iloc[3]
                 resumo_uf[uf] = resumo_uf.get(uf, 0) + nf['VALOR_SISTEMA']
             
@@ -230,7 +223,7 @@ elif menu == "💰 Comparativo":
             res_j = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
                          (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(), json.dumps(res_j)))
-            conn.commit(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
+            conn.commit(); st.success("Cotação salva com sucesso!"); st.dataframe(df_res)
 
     st.markdown("### 📄 Histórico de Cotações")
     df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn)
@@ -242,7 +235,7 @@ elif menu == "💰 Comparativo":
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine='xlsxwriter') as wr: df_det.to_excel(wr, index=False)
             c_h[0].download_button("📥 Baixar Excel", out.getvalue(), f"cot_{row['id']}.xlsx", key=f"dl_{row['id']}")
-            if c_h[1].button("🗑️ Excluir", key=f"del_c_{row['id']}"):
+            if c_h[1].button("🗑️ Excluir Lote", key=f"del_c_{row['id']}"):
                 conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],))
                 conn.commit(); conn.close(); st.rerun()
             
@@ -251,6 +244,12 @@ elif menu == "💰 Comparativo":
                 cn1, cn2, cn3 = st.columns([5, 2, 3])
                 cn1.write(f"📄 NF: {n_row.iloc[0]} - {n_row.iloc[2]}")
                 cn2.write(f"**R$ {n_row['VALOR_SISTEMA']:,.2f}**")
-                if cn3.button("👁️", key=f"vw_{row['id']}_{idx}"):
+                
+                # Lógica de alternância (Abrir/Fechar)
+                key_view = f"view_{row['id']}_{idx}"
+                if cn3.button("👁️ Detalhes", key=f"btn_{key_view}"):
+                    st.session_state.view_details[key_view] = not st.session_state.view_details.get(key_view, False)
+                
+                if st.session_state.view_details.get(key_view, False):
                     st.info(n_row.get('MEMORIA_CALCULO', 'Sem dados'))
     conn.close()
