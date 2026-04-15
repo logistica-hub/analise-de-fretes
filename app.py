@@ -5,24 +5,22 @@ import json
 import io
 from datetime import datetime
 
-# 1. Configuração de Layout Total
+# 1. Configuração de Layout
 st.set_page_config(page_title="Comparativo de Tabelas", layout="wide", initial_sidebar_state="expanded")
 
-# CSS para remover margens brancas, ajustar o BI e melhorar o contraste
+# CSS para Design BI e Remoção de Margens
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-left: 1rem; padding-right: 1rem; max-width: 100%; }
+    .block-container { padding-top: 1rem; max-width: 95%; }
     [data-testid="stSidebar"] { background-color: #F0F2F6 !important; border-right: 1px solid #D1D5DB; }
     [data-testid="stSidebar"] * { color: #000000 !important; font-weight: 700 !important; }
-    .filter-container { background-color: #FFFFFF; padding: 1rem; border-radius: 10px; border: 1px solid #E2E8F0; margin-bottom: 1rem; }
-    .stMetric { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; }
-    /* Ajuste para a tabela ocupar 100% da largura */
-    .stDataFrame, div[data-testid="stTable"] { width: 100% !important; }
+    .filter-container { background-color: #FFFFFF; padding: 1.2rem; border-radius: 10px; border: 1px solid #E2E8F0; margin-bottom: 1rem; }
+    .stMetric { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- BANCO DE DADOS ---
-DB_NAME = 'comparativo_v9.db'
+DB_NAME = 'comparativo_v10.db'
+
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -61,151 +59,150 @@ with st.sidebar:
 
 if menu == "📊 Dashboard":
     st.title("📊 BI - Dashboard de Fretes")
-    
     conn = sqlite3.connect(DB_NAME)
     df_h = pd.read_sql_query("SELECT * FROM cotacoes", conn)
     conn.close()
 
     if not df_h.empty:
-        # FILTROS ESTILO BI (Apenas Transportadora e UF)
         st.markdown('<div class="filter-container">', unsafe_allow_html=True)
         f1, f2 = st.columns(2)
-        with f1: t_list = st.multiselect("🚛 Filtrar Transportadora", sorted(df_h['transportadora'].unique().tolist()))
-        with f2: 
-            # Pegar UFs únicas dos resumos salvos
-            all_ufs = []
-            for item in df_h['estado_resumo']:
-                all_ufs.extend([x['UF'] for x in json.loads(item)])
-            uf_list = st.multiselect("📍 Filtrar UF (Estado)", sorted(list(set(all_ufs))))
+        with f1: t_filt = st.multiselect("🚛 Transportadora", sorted(df_h['transportadora'].unique().tolist()))
+        
+        all_resumos = []
+        for r in df_h['estado_resumo']: all_resumos.extend(json.loads(r))
+        df_resumo_all = pd.DataFrame(all_resumos)
+        
+        with f2: uf_filt = st.multiselect("📍 Estado (UF)", sorted(df_resumo_all['UF'].unique().tolist()))
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Lógica de Filtragem (Simples)
-        df_view = df_h.copy()
-        if t_list: df_view = df_view[df_view['transportadora'].isin(t_list)]
-        
-        # Dashboard Cards
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Cotações", len(df_view))
-        c2.metric("Valor Total", f"R$ {df_view['total'].sum():,.2f}")
-        c3.metric("Total Notas", int(df_view['qtd'].sum()))
+        # Filtragem
+        df_final = df_resumo_all.copy()
+        if t_filt: df_final = df_final[df_final['Transportadora'].isin(t_filt)]
+        if uf_filt: df_final = df_final[df_final['UF'].isin(uf_filt)]
 
-        st.subheader("📈 Comparativo de Custo por Estado")
-        # Reconstruir tabela dinâmica
-        resumo_total = []
-        for _, row in df_view.iterrows():
-            ufs = json.loads(row['estado_resumo'])
-            for u in ufs:
-                if not uf_list or u['UF'] in uf_list:
-                    resumo_total.append(u)
-        
-        if resumo_total:
-            df_bi = pd.DataFrame(resumo_total)
-            pivot = df_bi.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0)
-            st.dataframe(pivot, use_container_width=True) # Sem margens brancas
-            
-            st.download_button("📥 Baixar Tabela Consolidada (CSV)", pivot.to_csv().encode('utf-8'), "bi_fretes.csv")
+        m1, m2 = st.columns(2)
+        m1.metric("Valor Total em Fretes", f"R$ {df_final['Valor'].sum():,.2f}")
+        m2.metric("Cotações Realizadas", len(df_h))
+
+        st.subheader("📈 Comparativo por UF")
+        if not df_final.empty:
+            pivot = df_final.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0)
+            st.dataframe(pivot, use_container_width=True)
     else:
-        st.info("Nenhuma cotação disponível.")
+        st.info("Sem dados. Realize uma cotação no menu 'Comparativo'.")
 
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     
-    # Lógica de Edição
     if 'edit_id' not in st.session_state: st.session_state.edit_id = None
+    
+    # Se estiver editando, carregar dados
+    default_nome = ""
+    if st.session_state.edit_id:
+        conn = sqlite3.connect(DB_NAME)
+        edit_data = pd.read_sql_query(f"SELECT * FROM transportadoras WHERE id={st.session_state.edit_id}", conn).iloc[0]
+        conn.close()
+        default_nome = edit_data['nome']
+        st.warning(f"Editando: {default_nome}")
 
-    with st.expander("➕ Cadastrar / Editar Transportadora", expanded=st.session_state.edit_id is not None):
-        t_nome = st.text_input("Nome da Transportadora", key="t_nome").upper()
+    with st.expander("➕ Cadastrar / Editar Transportadora", expanded=(st.session_state.edit_id is not None)):
+        t_nome = st.text_input("Nome da Transportadora", value=default_nome).upper()
         u1, u2 = st.columns(2)
-        with u1: f_t = st.file_uploader("Tabela Frete", type=["xlsx"])
-        with u2: f_c = st.file_uploader("Planilha Cidades", type=["xlsx"])
+        with u1: f_tab = st.file_uploader("Tabela Frete (Excel)", type=["xlsx"])
+        with u2: f_cid = st.file_uploader("Cidades (Excel)", type=["xlsx"])
         
-        if f_t and f_c and t_nome:
-            df_t = pd.read_excel(f_t).fillna(0)
-            st.markdown("#### Mapping Faixas de Peso")
-            n_faixas = st.number_input("Qtd Faixas", 1, 30, 6)
+        if f_tab:
+            df_t = pd.read_excel(f_tab).fillna(0)
+            
+            st.markdown("#### ⚖️ Mapping Faixas de Peso")
+            n_f = st.number_input("Qtd Faixas", 1, 30, 6)
             faixas = []
-            for i in range(int(n_faixas)):
-                r = st.columns([1, 1, 3])
-                with r[0]: mi = st.number_input(f"Min", key=f"mi{i}")
-                with r[1]: ma = st.number_input(f"Max", key=f"ma{i}")
-                with r[2]: co = st.selectbox(f"Coluna", df_t.columns, key=f"co{i}")
-                faixas.append({"min": mi, "max": ma, "col": co})
+            cols_f = st.columns(3)
+            for i in range(int(n_f)):
+                with cols_f[i % 3]:
+                    r = st.columns([1, 1, 2])
+                    mi = r[0].number_input("Min", key=f"mi{i}")
+                    ma = r[1].number_input("Max", key=f"ma{i}")
+                    co = r[2].selectbox("Col", df_t.columns, key=f"co{i}")
+                    faixas.append({"min": mi, "max": ma, "col": co})
+            
+            st.markdown("#### 💰 Mapping de Taxas (Voltou!)")
+            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
+            m_taxas = {}
+            t_cols = st.columns(3)
+            for idx, tx in enumerate(taxas_nomes):
+                with t_cols[idx % 3]:
+                    m_taxas[tx] = st.selectbox(tx, ["Não mapear"] + list(df_t.columns), key=f"tx_{idx}")
 
             if st.button("💾 Salvar Transportadora"):
+                mapa_final = {"faixas": faixas, "taxas": m_taxas}
                 conn = sqlite3.connect(DB_NAME)
-                mapa = {"faixas": faixas, "excedente": {"start": 101, "col": df_t.columns[-1]}, "taxas": {}}
                 if st.session_state.edit_id:
-                    conn.execute("UPDATE transportadoras SET nome=?, tabela_json=?, cidades_json=?, mapeamento_json=? WHERE id=?",
-                                 (t_nome, df_t.to_json(), pd.read_excel(f_c).to_json(), json.dumps(mapa), st.session_state.edit_id))
+                    conn.execute("UPDATE transportadoras SET nome=?, tabela_json=?, mapeamento_json=? WHERE id=?",
+                                 (t_nome, df_t.to_json(), json.dumps(mapa_final), st.session_state.edit_id))
                 else:
                     conn.execute("INSERT INTO transportadoras (nome, tabela_json, cidades_json, mapeamento_json) VALUES (?,?,?,?)",
-                                 (t_nome, df_t.to_json(), pd.read_excel(f_c).to_json(), json.dumps(mapa)))
-                conn.commit()
-                conn.close()
+                                 (t_nome, df_t.to_json(), pd.read_excel(f_cid).to_json(), json.dumps(mapa_final)))
+                conn.commit(); conn.close()
                 st.session_state.edit_id = None
                 st.rerun()
 
-    # Listagem com Edição e Exclusão
+    st.divider()
+    # Listagem
     conn = sqlite3.connect(DB_NAME)
     df_l = pd.read_sql_query("SELECT id, nome FROM transportadoras", conn)
     conn.close()
     for _, r in df_l.iterrows():
-        c = st.columns([6, 1, 1])
+        c = st.columns([5, 1, 1])
         c[0].write(f"🏢 **{r['nome']}**")
-        if c[1].button("✏️", key=f"et{r['id']}"):
+        if c[1].button("✏️", key=f"edit_t_{r['id']}"):
             st.session_state.edit_id = r['id']
             st.rerun()
-        if c[2].button("🗑️", key=f"dt{r['id']}"):
-            conn = sqlite3.connect(DB_NAME)
-            conn.execute("DELETE FROM transportadoras WHERE id=?", (r['id'],))
-            conn.commit(); conn.close(); st.rerun()
+        if c[2].button("🗑️", key=f"del_t_{r['id']}"):
+            conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM transportadoras WHERE id=?", (r['id'],)); conn.commit(); conn.close(); st.rerun()
 
 elif menu == "💰 Comparativo":
-    st.title("💰 Cotação e Comparativo")
-    
+    st.title("💰 Comparativo de Fretes")
     f_base = st.file_uploader("📥 Subir Planilha Base", type=["xlsx"])
+    
     if f_base:
         df_b = pd.read_excel(f_base).fillna(0)
-        st.write("### 🗂️ Arquivo Carregado")
-        st.dataframe(df_b.head(3), use_container_width=True)
+        st.write("### Mapeamento da Base")
+        bc1, bc2, bc3, bc4 = st.columns(4)
+        with bc1: b_cid = st.selectbox("Cidade", df_b.columns)
+        with bc2: b_uf = st.selectbox("UF", df_b.columns)
+        with bc3: b_peso = st.selectbox("Peso", df_b.columns)
+        with bc4: b_val = st.selectbox("Valor NF", df_b.columns)
 
         conn = sqlite3.connect(DB_NAME)
-        lista_t = pd.read_sql_query("SELECT nome FROM transportadoras", conn)['nome'].tolist()
+        ts = pd.read_sql_query("SELECT * FROM transportadoras", conn)
         conn.close()
 
-        t_alvo = st.selectbox("Selecione Transportadora", lista_t)
+        t_alvo = st.selectbox("Selecione a Transportadora", ts['nome'].tolist())
         if st.button("🚀 Gerar Cotação"):
-            # (Lógica de cálculo aqui - simplificada para o exemplo)
-            now = datetime.now().strftime("%d/%m/%Y %H:%M")
+            # Lógica de Cálculo (Resumida para o exemplo, deve conter a busca por sigla)
+            df_b['FRETE_COTADO'] = 150.00 # Simulação de cálculo
+            resumo = [{"UF": "SP", "Transportadora": t_alvo, "Valor": df_b['FRETE_COTADO'].sum()}]
+            
             conn = sqlite3.connect(DB_NAME)
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
-                         (now, t_alvo, 1250.50, len(df_b), df_b.to_json(), json.dumps([{"UF":"SP", "Transportadora":t_alvo, "Valor":1250.50}])))
+                         (datetime.now().strftime("%d/%m/%Y %H:%M"), t_alvo, df_b['FRETE_COTADO'].sum(), len(df_b), df_b.to_json(), json.dumps(resumo)))
             conn.commit(); conn.close()
-            st.success("Calculado!")
+            st.success("Concluído!")
 
     st.divider()
-    st.subheader("📜 Histórico de Cotações (Expandível)")
-    
+    st.subheader("📜 Histórico de Cotações")
     conn = sqlite3.connect(DB_NAME)
     df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn)
     conn.close()
 
-    # Opção de baixar múltiplas
-    if not df_h.empty:
-        selecionadas = st.multiselect("Selecionar múltiplas para baixar", df_h['id'].tolist(), format_func=lambda x: f"Cotação #{x}")
-        if st.button("📥 Baixar Selecionadas (JSON/ZIP)"):
-            st.info("Função de ZIP sendo preparada...")
-
     for _, row in df_h.iterrows():
-        with st.expander(f"📦 {row['transportadora']} - {row['data_hora']} - R$ {row['total']:.2f}"):
-            st.write(f"Quantidade de Itens: {row['qtd']}")
-            c1, c2, c3 = st.columns(3)
-            with c1: 
-                # Botão para baixar esta cotação específica em CSV
-                df_detalhe = pd.read_json(io.StringIO(row['detalhes_json']))
-                st.download_button("📥 Baixar Excel", df_detalhe.to_csv().encode('utf-8'), f"cotacao_{row['id']}.csv")
-            with c2:
-                if st.button("✏️ Editar", key=f"edit_c_{row['id']}"): st.warning("Edição de cotação reabre o mapeamento")
-            with c3:
-                if st.button("🗑️ Excluir", key=f"del_c_{row['id']}"):
-                    conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
+        with st.expander(f"📦 {row['transportadora']} | {row['data_hora']} | R$ {row['total']:.2f}"):
+            df_det = pd.read_json(io.StringIO(row['detalhes_json']))
+            # DOWNLOAD DO EXCEL COM COTAÇÕES
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_det.to_excel(writer, index=False)
+            st.download_button("📥 Baixar Planilha com Fretes", output.getvalue(), f"cotacao_{row['transportadora']}.xlsx")
+            if st.button("🗑️ Excluir", key=f"del_c_{row['id']}"):
+                conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
