@@ -9,7 +9,6 @@ import math
 # 1. Configuração de Layout
 st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
 
-# CSS para garantir que o layout fique limpo e legível
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; }
@@ -32,8 +31,7 @@ def init_db():
 
 init_db()
 
-# Estados de sessão para controle de visualização
-if 'view_details' not in st.session_state: st.session_state.view_details = {}
+if 'view_details' not in st.session_state: st.session_state.edit_id = None
 if 'edit_id' not in st.session_state: st.session_state.edit_id = None
 
 # --- SIDEBAR ---
@@ -51,7 +49,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (ESTILO B.I. TOTALMENTE DINÂMICO) ---
+# --- DASHBOARD (LOGICA DE B.I. REAL) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -59,43 +57,49 @@ if menu == "📊 Dashboard":
     conn.close()
 
     if not df_h.empty:
-        # Extração de dados para o BI
-        resumos_all = []
+        # AQUI ESTÁ O SEGREDO: Vamos carregar TODAS as notas individuais de todos os cálculos
+        notas_individuais = []
         for _, row in df_h.iterrows():
-            items = json.loads(row['estado_resumo'])
-            for item in items:
-                item['data_ref'] = row['data_hora'] # Para garantir unicidade se necessário
-            resumos_all.extend(items)
+            detalhes = json.loads(row['detalhes_json'])
+            # Se detalhes for um dicionário (formato record do pandas), transformamos em lista
+            if isinstance(detalhes, dict):
+                temp_df = pd.DataFrame(detalhes)
+                temp_df['Transportadora'] = row['transportadora']
+                notas_individuais.append(temp_df)
+            else:
+                temp_df = pd.DataFrame(detalhes)
+                temp_df['Transportadora'] = row['transportadora']
+                notas_individuais.append(temp_df)
         
-        df_base_bi = pd.DataFrame(resumos_all)
+        df_completo_bi = pd.concat(notas_individuais, ignore_index=True)
+        
+        # Mapeando a coluna de UF (Geralmente é a 4ª coluna da planilha original, índice 3)
+        # Vamos garantir que o DataFrame tenha uma coluna 'UF' clara para o filtro
+        if 'UF' not in df_completo_bi.columns:
+            df_completo_bi['UF'] = df_completo_bi.iloc[:, 3] 
 
-        st.markdown("### 🔍 Filtros do Dashboard")
+        st.markdown("### 🔍 Filtros Dinâmicos")
         f1, f2 = st.columns(2)
-        filtro_t = f1.multiselect("Filtrar Transportadora", df_base_bi['Transportadora'].unique())
-        filtro_uf = f2.multiselect("Filtrar Estado (UF)", sorted(df_base_bi['UF'].unique()))
+        filtro_t = f1.multiselect("Transportadora", df_completo_bi['Transportadora'].unique())
+        filtro_uf = f2.multiselect("Estado (UF)", sorted(df_completo_bi['UF'].unique()))
         
-        # Lógica de Filtro Dinâmico (Igual B.I.)
-        df_final = df_base_bi.copy()
-        if filtro_t:
-            df_final = df_final[df_final['Transportadora'].isin(filtro_t)]
-        if filtro_uf:
-            df_final = df_final[df_final['UF'].isin(filtro_uf)]
+        df_filtrado = df_completo_bi.copy()
+        if filtro_t: df_filtrado = df_filtrado[df_filtrado['Transportadora'].isin(filtro_t)]
+        if filtro_uf: df_filtrado = df_filtrado[df_filtrado['UF'].isin(filtro_uf)]
 
-        # Renderização das Métricas
+        # MÉTRICAS QUE OLHAM PARA AS NOTAS E NÃO PARA AS LINHAS DO DASHBOARD
         c1, c2, c3 = st.columns(3)
-        
-        # O valor de len(df_final) mudará instantaneamente conforme os filtros acima
-        c1.metric("Total Cotado", f"R$ {df_final['Valor'].sum():,.2f}")
-        c2.metric("Notas Processadas", f"{len(df_final)}") 
-        c3.metric("Ticket Médio", f"R$ {df_final['Valor'].mean():,.2f}" if len(df_final) > 0 else "R$ 0,00")
+        c1.metric("Total Cotado", f"R$ {df_filtrado['VALOR_SISTEMA'].sum():,.2f}")
+        # AGORA SIM: Conta a quantidade de notas fiscais (linhas de notas)
+        c2.metric("Notas Processadas", f"{len(df_filtrado)}") 
+        c3.metric("Ticket Médio", f"R$ {df_filtrado['VALOR_SISTEMA'].mean():,.2f}" if len(df_filtrado) > 0 else "R$ 0,00")
 
-        if not df_final.empty:
+        if not df_filtrado.empty:
             st.subheader("📋 Consolidado por Estado")
-            # Tabela dinâmica que também responde aos filtros
-            pivot = df_final.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0)
-            st.dataframe(pivot, use_container_width=True)
+            resumo_view = df_filtrado.pivot_table(index="UF", columns="Transportadora", values="VALOR_SISTEMA", aggfunc="sum").fillna(0)
+            st.dataframe(resumo_view, use_container_width=True)
     else:
-        st.info("Aguardando a primeira cotação para exibir dados.")
+        st.info("Realize um cálculo no menu 'Comparativo' para ver os dados aqui.")
 
 # --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
@@ -105,7 +109,6 @@ elif menu == "🚛 Transportadoras":
     with st.expander("📝 Configurar Mapeamento", expanded=is_editing):
         edit_data = None
         mapa_previo = {"faixas": [], "taxas": {}, "kg_extra": "Não mapear"}
-        
         if is_editing:
             conn = sqlite3.connect(DB_NAME)
             edit_data = pd.read_sql_query(f"SELECT * FROM transportadoras WHERE id={st.session_state.edit_id}", conn).iloc[0]
@@ -125,7 +128,6 @@ elif menu == "🚛 Transportadoras":
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             st.markdown("---")
             st.subheader("⚖️ Faixas de Peso")
-            
             sel_kg = str(mapa_previo.get('kg_extra', "Não mapear"))
             col_kg_extra = st.selectbox("Coluna do Kg Adicional", cols_t, index=cols_t.index(sel_kg) if sel_kg in cols_t else 0)
             
@@ -163,9 +165,6 @@ elif menu == "🚛 Transportadoras":
                 conn.commit(); conn.close()
                 st.session_state.edit_id = None; st.rerun()
 
-        if is_editing and st.button("❌ Cancelar"):
-            st.session_state.edit_id = None; st.rerun()
-
     st.markdown("### 📋 Transportadoras Cadastradas")
     conn = sqlite3.connect(DB_NAME)
     ts = pd.read_sql_query("SELECT id, nome FROM transportadoras", conn)
@@ -179,7 +178,7 @@ elif menu == "🚛 Transportadoras":
             conn.commit(); conn.close(); st.rerun()
     conn.close()
 
-# --- COMPARATIVO ---
+# --- COMPARATIVO (DETALHAMENTO TAXA POR TAXA) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Cálculo de Frete")
     f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
@@ -200,6 +199,7 @@ elif menu == "💰 Comparativo":
                     peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7])
                     sigla = df_cid_ref[df_cid_ref.iloc[:,0].astype(str).str.upper() == cidade_nf].iloc[0, 2]
                     precos = df_tab[df_tab.iloc[:,2] == sigla].iloc[0]
+                    
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
                         u_max, u_col = f['max'], f['col']
@@ -207,22 +207,41 @@ elif menu == "💰 Comparativo":
                             f_peso = float(precos[f['col']]); d = True; break
                     if not d and mapa.get('kg_extra') != "Não mapear":
                         f_peso = float(precos[u_col]) + ((peso_nf - u_max) * float(precos[mapa['kg_extra']]))
+                    
                     def gv(n): return float(precos[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
+                    
                     v_adv = max(valor_nf * (gv("Ad Valorem %")), gv("Ad Valorem Min"))
                     v_gris = max(valor_nf * (gv("Gris %")), gv("Gris Min"))
                     v_emex = max(valor_nf * (gv("Emex %")), gv("Emex Min"))
                     v_pedagio = math.ceil(peso_nf / 100) * gv("Pedagio")
-                    v_fixas = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
-                    nf['VALOR_SISTEMA'] = f_peso + v_adv + v_gris + v_emex + v_pedagio + v_fixas
-                    nf['MEMORIA_CALCULO'] = f"Peso: {f_peso:.2f} | AdVal: {v_adv:.2f} | Gris: {v_gris:.2f} | Pedágio: {v_pedagio:.2f} | Fixas: {v_fixas:.2f}"
-                except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro de Localização"
-                res_final.append(nf.to_dict()); uf = nf.iloc[3]
+                    
+                    # Taxas Fixas Detalhadas
+                    t_tas = gv("TAS"); t_ctrc = gv("CTRC"); t_trt = gv("TRT"); t_tda = gv("TDA"); t_sec = gv("SEC-CAT")
+                    
+                    total_nf = f_peso + v_adv + v_gris + v_emex + v_pedagio + t_tas + t_ctrc + t_trt + t_tda + t_sec
+                    nf['VALOR_SISTEMA'] = total_nf
+                    
+                    # MEMÓRIA DETALHADA
+                    nf['MEMORIA_CALCULO'] = (f"Frete Peso: R$ {f_peso:.2f}\n"
+                                            f"Ad Valorem: R$ {v_adv:.2f}\n"
+                                            f"Gris: R$ {v_gris:.2f}\n"
+                                            f"Emex: R$ {v_emex:.2f}\n"
+                                            f"Pedágio: R$ {v_pedagio:.2f}\n"
+                                            f"TAS: R$ {t_tas:.2f}\n"
+                                            f"CTRC: R$ {t_ctrc:.2f}\n"
+                                            f"TRT: R$ {t_trt:.2f}\n"
+                                            f"TDA: R$ {t_tda:.2f}\n"
+                                            f"SEC-CAT: R$ {t_sec:.2f}")
+                except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro no cálculo"
+                
+                res_final.append(nf.to_dict())
+                uf = nf.iloc[3]
                 resumo_uf[uf] = resumo_uf.get(uf, 0) + nf['VALOR_SISTEMA']
             
             df_res = pd.DataFrame(res_final)
             res_j = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
-                         (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(), json.dumps(res_j)))
+                         (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(orient='records'), json.dumps(res_j)))
             conn.commit(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
 
     st.markdown("### 📄 Histórico de Cotações")
@@ -238,11 +257,10 @@ elif menu == "💰 Comparativo":
                 cn1.write(f"📄 NF: {n_row.iloc[0]} - {n_row.iloc[2]}")
                 cn2.write(f"**R$ {n_row['VALOR_SISTEMA']:,.2f}**")
                 
-                # BOTÃO: Olho + Texto intuitivo
                 key_v = f"v_{row['id']}_{idx}"
                 if cn3.button(f"👁️ Detalhar Cálculo", key=f"b_{key_v}"): 
                     st.session_state.view_details[key_v] = not st.session_state.view_details.get(key_v, False)
                 
                 if st.session_state.view_details.get(key_v, False): 
-                    st.info(n_row.get('MEMORIA_CALCULO', 'Sem dados'))
+                    st.text(n_row.get('MEMORIA_CALCULO', 'Sem dados'))
     conn.close()
