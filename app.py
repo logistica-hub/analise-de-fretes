@@ -7,7 +7,7 @@ from datetime import datetime
 import math
 
 # 1. Layout e CSS
-st.set_page_config(page_title="Comparativo de Tabelas", layout="wide")
+st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
 
 st.markdown("""
     <style>
@@ -51,7 +51,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("NAVEGAÇÃO", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD DINÂMICO ---
+# --- DASHBOARD (CORREÇÃO DE VALOR FIXO) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -60,9 +60,14 @@ if menu == "📊 Dashboard":
 
     if not df_h.empty:
         resumos_all = []
+        # Importante: Iteramos sobre as cotações para construir o DataFrame de BI
         for _, row in df_h.iterrows():
             items = json.loads(row['estado_resumo'])
+            # Adicionamos o ID da cotação para garantir contagem única se necessário
+            for i in items:
+                i['id_cotacao'] = row['id']
             resumos_all.extend(items)
+        
         df_base_filtros = pd.DataFrame(resumos_all)
 
         st.markdown("### 🔍 Filtros do BI")
@@ -76,65 +81,75 @@ if menu == "📊 Dashboard":
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {df_final_bi['Valor'].sum():,.2f}")
-        # Quantidade real baseada na soma da coluna 'qtd' filtrada (ou contagem de linhas do detalhe)
-        c2.metric("Notas Processadas", f"{len(df_final_bi)}") 
+        
+        # QUANTIDADE DINÂMICA: Agora baseada no banco de dados filtrado
+        qtd_total = df_h[df_h['transportadora'].isin(filtro_t)]['qtd'].sum() if filtro_t else df_h['qtd'].sum()
+        c2.metric("Notas Processadas", f"{int(qtd_total)}") 
+        
         c3.metric("Ticket Médio", f"R$ {df_final_bi['Valor'].mean():,.2f}" if not df_final_bi.empty else "R$ 0.00")
 
         st.subheader("📋 Consolidado por UF")
         if not df_final_bi.empty:
             st.dataframe(df_final_bi.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0), use_container_width=True)
 
-# --- TRANSPORTADORAS ---
+# --- TRANSPORTADORAS (CORREÇÃO DO VALUEERROR NA EDIÇÃO) ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     
-    # Lógica de Edição
     if 'edit_id' not in st.session_state: st.session_state.edit_id = None
     
     with st.expander("📝 Configurar Tabela JAMEF", expanded=st.session_state.edit_id is not None):
         edit_data = None
+        mapa_edit = {}
         if st.session_state.edit_id:
             conn = sqlite3.connect(DB_NAME)
-            edit_data = pd.read_sql_query(f"SELECT * FROM transportadoras WHERE id={st.session_state.edit_id}", conn).iloc[0]
+            query = f"SELECT * FROM transportadoras WHERE id={st.session_state.edit_id}"
+            res = pd.read_sql_query(query, conn)
+            if not res.empty:
+                edit_data = res.iloc[0]
+                mapa_edit = json.loads(edit_data['mapeamento_json'])
             conn.close()
-            mapa_edit = json.loads(edit_data['mapeamento_json'])
 
-        t_nome = st.text_input("Nome da Empresa", value=edit_data['nome'] if edit_data is not None else "").upper()
+        t_nome = st.text_input("Nome da Empresa", value=str(edit_data['nome']) if edit_data is not None else "").upper()
         u1, u2 = st.columns(2)
         with u1: f_tab = st.file_uploader("Excel Tabela", type=["xlsx"])
         with u2: f_cid = st.file_uploader("Excel Cidades", type=["xlsx"])
         
         if f_tab:
             df_t = pd.read_excel(f_tab).fillna(0)
-            cols_t = ["Não mapear"] + list(df_t.columns)
+            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             
             st.markdown("### ⚖️ Faixas de Peso")
-            sel_kg = mapa_edit['kg_extra'] if edit_data and mapa_edit['kg_extra'] in cols_t else cols_t[0]
-            col_kg_extra = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t, index=cols_t.index(sel_kg))
+            # Correção do ValueError: convertendo para string e garantindo comparação escalar
+            saved_kg = str(mapa_edit.get('kg_extra', "Não mapear"))
+            idx_kg = cols_t.index(saved_kg) if saved_kg in cols_t else 0
+            col_kg_extra = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t, index=idx_kg)
             
-            n_f_val = len(mapa_edit['faixas']) if edit_data else 6
-            n_f = st.number_input("Qtd Faixas", 1, 50, n_f_val)
+            n_f_val = len(mapa_edit.get('faixas', [])) if edit_data else 6
+            n_f = st.number_input("Qtd Faixas", 1, 50, n_f_val if n_f_val > 0 else 6)
             faixas = []
             for i in range(int(n_f)):
                 r = st.columns(3)
-                v_mi = mapa_edit['faixas'][i]['min'] if edit_data and i < len(mapa_edit['faixas']) else 0.0
-                v_ma = mapa_edit['faixas'][i]['max'] if edit_data and i < len(mapa_edit['faixas']) else 0.0
-                v_co = mapa_edit['faixas'][i]['col'] if edit_data and i < len(mapa_edit['faixas']) else cols_t[0]
+                f_data = mapa_edit['faixas'][i] if edit_data and i < len(mapa_edit['faixas']) else {}
+                
+                v_mi = float(f_data.get('min', 0.0))
+                v_ma = float(f_data.get('max', 0.0))
+                v_co = str(f_data.get('col', "Não mapear"))
                 
                 faixas.append({
-                    "min": r[0].number_input(f"De (kg)", value=float(v_mi), key=f"mi{i}"),
-                    "max": r[1].number_input(f"Até (kg)", value=float(v_ma), key=f"ma{i}"),
+                    "min": r[0].number_input(f"De (kg)", value=v_mi, key=f"mi{i}"),
+                    "max": r[1].number_input(f"Até (kg)", value=v_ma, key=f"ma{i}"),
                     "col": r[2].selectbox(f"Coluna Tabela", cols_t, index=cols_t.index(v_co) if v_co in cols_t else 0, key=f"co{i}")
                 })
             
             st.markdown("### 💰 Taxas Adicionais")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
             m_taxas = {}
-            t_cols = st.columns(3) # Volta para o layout original lado a lado
+            t_cols = st.columns(3) # Layout Lado a Lado preservado
             for idx, tx in enumerate(taxas_nomes):
                 with t_cols[idx % 3]:
-                    v_tax = mapa_edit['taxas'][tx] if edit_data and tx in mapa_edit['taxas'] else cols_t[0]
-                    m_taxas[tx] = st.selectbox(tx, cols_t, index=cols_t.index(v_tax) if v_tax in cols_t else 0, key=f"tx_{tx}")
+                    saved_tx = str(mapa_edit.get('taxas', {}).get(tx, "Não mapear"))
+                    m_taxas[tx] = st.selectbox(tx, cols_t, index=cols_t.index(saved_tx) if saved_tx in cols_t else 0, key=f"tx_{tx}")
 
             if st.button("💾 Salvar Configuração"):
                 mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra}
@@ -163,7 +178,7 @@ elif menu == "🚛 Transportadoras":
             conn.commit(); conn.close(); st.rerun()
     conn.close()
 
-# --- COMPARATIVO (MANTIDO CONFORME PEDIDO) ---
+# --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Comparativo")
     f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
@@ -205,8 +220,9 @@ elif menu == "💰 Comparativo":
                     v_fixas = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
                     
                     nf['VALOR_SISTEMA'] = f_peso + v_adv + v_gris + v_emex + v_pedagio + v_fixas
-                    nf['MEMORIA_CALCULO'] = f"Frete Peso: {f_peso:.2f} | AdVal: {v_adv:.2f} | Gris: {v_gris:.2f} | Pedágio: {v_pedagio:.2f} | Taxas Fixas: {v_fixas:.2f}"
+                    nf['MEMORIA_CALCULO'] = f"Peso: {f_peso:.2f} | AdVal: {v_adv:.2f} | Gris: {v_gris:.2f} | Pedágio: {v_pedagio:.2f} | Fixas: {v_fixas:.2f}"
                 except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro"
+                
                 res_final.append(nf.to_dict()); uf = nf.iloc[3]
                 resumo_uf[uf] = resumo_uf.get(uf, 0) + nf['VALOR_SISTEMA']
             
