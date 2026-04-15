@@ -6,153 +6,182 @@ import json
 import io
 from datetime import datetime
 
-# Configurações de Estilo e Layout
-st.set_page_config(page_title="Comparativo de Tabelas Pro", layout="wide")
+# 1. Configuração de Layout (Ocupar a tela toda)
+st.set_page_config(page_title="Comparativo de Tabelas", layout="wide", initial_sidebar_state="expanded")
 
-# CSS para tornar o design mais moderno
+# CSS para remover espaços brancos e estilizar tabelas
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
-    .stExpander { border: 1px solid #dee2e6; border-radius: 8px; margin-bottom: 10px; }
-    [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid #eee; }
+    .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+    .stTable { width: 100%; }
+    [data-testid="stSidebar"] { background-color: #f0f2f6; }
+    .stMetric { background-color: #ffffff; padding: 10px; border-radius: 10px; border: 1px solid #e6e9ef; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- BANCO DE DADOS (V3 - Estrutura SaaS) ---
+# --- BANCO DE DADOS ---
 def init_db():
-    conn = sqlite3.connect('comparativo_v3.db')
+    conn = sqlite3.connect('comparativo_v4.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS transportadoras 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, tabela_json TEXT, 
                   cidades_json TEXT, mapeamento_json TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS cotacoes_realizadas 
+    c.execute('''CREATE TABLE IF NOT EXISTS cotacoes 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, data_hora TEXT, transportadora TEXT, 
-                  resultado_json TEXT, resumo_total REAL, qtd_notas INTEGER)''')
+                  detalhes_json TEXT, total REAL, qtd INTEGER)''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- SIDEBAR (MENU LATERAL) ---
-with st.sidebar:
-    st.title("⚙️ Configurações")
-    logo_file = st.file_uploader("Subir Logo da Empresa", type=["png", "jpg"])
-    menu = st.selectbox("Navegação", ["📊 Dashboard", "🚛 Cadastro de Tabelas", "💰 Comparativo (Cotação)"])
-    st.divider()
-    st.info("Desenvolvido para Gestão de Fretes Industrial")
-
-# --- TOPO (LOGO) ---
-col_logo_vazia, col_logo_img = st.columns([8, 1])
-with col_logo_img:
-    if logo_file:
-        st.image(logo_file, width=100)
-
-# --- FUNÇÕES DE AUXÍLIO ---
-def salvar_transp(nome, df_p, df_c, mapa):
-    conn = sqlite3.connect('comparativo_v3.db')
-    conn.execute("INSERT INTO transportadoras (nome, tabela_json, cidades_json, mapeamento_json) VALUES (?,?,?,?)",
-                 (nome, df_p.to_json(orient='split'), df_c.to_json(orient='split'), json.dumps(mapa)))
+# --- FUNÇÕES ---
+def excluir_transp(id_t):
+    conn = sqlite3.connect('comparativo_v4.db')
+    conn.execute("DELETE FROM transportadoras WHERE id=?", (id_t,))
     conn.commit()
     conn.close()
 
-def listar_transp():
-    conn = sqlite3.connect('comparativo_v3.db')
-    df = pd.read_sql_query("SELECT id, nome, mapeamento_json FROM transportadoras", conn)
+def excluir_cotacao(id_c):
+    conn = sqlite3.connect('comparativo_v4.db')
+    conn.execute("DELETE FROM cotacoes WHERE id=?", (id_c,))
+    conn.commit()
     conn.close()
-    return df
 
-# --- ABA 1: DASHBOARD ---
+# --- SIDEBAR (CONSOLIDADA) ---
+with st.sidebar:
+    # Espaço para Logo
+    logo = st.file_uploader("🖼️ Logo da Empresa", type=["png", "jpg"])
+    if logo: st.image(logo, use_container_width=True)
+    
+    st.markdown("### 🧭 Navegação")
+    menu = st.radio("Ir para:", ["📊 Dashboard", "🚛 Gestão de Tabelas", "💰 Novo Comparativo"])
+    
+    st.divider()
+    if menu == "📊 Dashboard":
+        st.markdown("### 🔍 Filtros")
+        f_estado = st.multiselect("Estado", ["SP", "RJ", "MG", "PR", "SC", "RS", "BA", "GO"])
+        f_transp = st.multiselect("Transportadora", []) # Preencher via DB
+
+# --- CONTEÚDO PRINCIPAL ---
+
+# TELA 1: DASHBOARD
 if menu == "📊 Dashboard":
-    st.subheader("📊 Dashboard Comparativo por Estado")
+    st.title("📊 Painel Comparativo")
     
-    # Filtros
-    f1, f2, f3 = st.columns(3)
-    with f1: st.multiselect("Filtrar Estado", ["SP", "RJ", "MG", "BA", "PR"]) # Exemplo
-    with f2: st.selectbox("Mês", ["Janeiro", "Fevereiro", "Março"])
-    
-    # Tabela Dinâmica (Placeholder)
-    st.write("### Frete Total por UF")
-    # Aqui o sistema buscaria no banco de cotações para montar o pivot
-    st.info("O Dashboard será preenchido conforme as cotações forem salvas.")
-    st.button("📥 Baixar Relatório Dashboard")
+    # Tabela Dinâmica por Estado
+    conn = sqlite3.connect('comparativo_v4.db')
+    df_cot = pd.read_sql_query("SELECT * FROM cotacoes", conn)
+    conn.close()
 
-# --- ABA 2: CADASTRO DE TRANSPORTADORAS ---
-elif menu == "🚛 Cadastro de Tabelas":
-    st.subheader("🚛 Gestão de Transportadoras")
-    
-    with st.expander("➕ Cadastrar Nova Transportadora"):
-        nome_t = st.text_input("Nome da Transportadora")
-        up1, up2 = st.columns(2)
-        with up1: f_precos = st.file_uploader("Tabela de Frete (Excel)", type=["xlsx"])
-        with up2: f_cidades = st.file_uploader("Planilha de Cidades (Excel)", type=["xlsx"])
+    if not df_cot.empty:
+        # Exemplo de Dashboard
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Cotações Realizadas", len(df_cot))
+        c2.metric("Total Cotado", f"R$ {df_cot['total'].sum():,.2f}")
         
-        if f_precos and f_cidades:
-            df_p = pd.read_excel(f_precos).fillna(0)
+        st.write("### 📈 Frete Acumulado por Estado")
+        # Aqui você pode cruzar os dados salvos para gerar o Pivot Table
+        st.dataframe(df_cot, use_container_width=True)
+        st.button("📥 Baixar Relatório Geral")
+    else:
+        st.info("Aguardando a primeira cotação ser realizada.")
+
+# TELA 2: GESTÃO DE TABELAS (CADASTRO E LISTAGEM)
+elif menu == "🚛 Gestão de Tabelas":
+    st.title("🚛 Cadastro de Transportadoras")
+    
+    with st.expander("➕ Adicionar Nova Transportadora", expanded=False):
+        t_nome = st.text_input("Nome da Transportadora (Ex: Braspress)")
+        u1, u2 = st.columns(2)
+        with u1: f_tabela = st.file_uploader("Tabela de Frete (Excel)", type=["xlsx"])
+        with u2: f_cidades = st.file_uploader("Lista de Cidades", type=["xlsx"])
+        
+        if f_tabela and f_cidades:
+            df_p = pd.read_excel(f_tabela).fillna(0)
             df_c = pd.read_excel(f_cidades).fillna(0)
             
-            st.markdown("### ⚙️ Mapeamento de Faixas de Peso Dinâmicas")
-            num_faixas = st.number_input("Quantas faixas de peso existem? (Ex: 5, 10, 20...)", min_value=1, value=5)
-            faixas_map = []
-            cols_f = st.columns(3)
-            for i in range(int(num_faixas)):
-                with cols_f[i % 3]:
-                    min_w = st.number_input(f"De (kg) - Faixa {i+1}", key=f"min_{i}")
-                    max_w = st.number_input(f"Até (kg) - Faixa {i+1}", key=f"max_{i}")
-                    col_p = st.selectbox(f"Coluna na Tabela", df_p.columns, key=f"col_{i}")
-                    faixas_map.append({"min": min_w, "max": max_w, "col": col_p})
+            st.markdown("#### ⚖️ Mapeamento de Faixas de Peso")
+            n_faixas = st.number_input("Quantas faixas de peso fixo?", 1, 20, 5)
+            faixas = []
+            for i in range(int(n_faixas)):
+                r1, r2, r3 = st.columns([1, 1, 2])
+                with r1: mi = st.number_input(f"Mín (kg)", key=f"mi{i}")
+                with r2: ma = st.number_input(f"Máx (kg)", key=f"ma{i}")
+                with r3: co = st.selectbox(f"Coluna na Planilha", df_p.columns, key=f"co{i}")
+                faixas.append({"min": mi, "max": ma, "col": co})
             
-            st.markdown("### 🏷️ Mapeamento de Taxas (Opcional)")
-            taxas_map = {}
-            t1, t2, t3 = st.columns(3)
-            with t1:
-                taxas_map['adv_p'] = st.selectbox("Ad Valorem %", ["Não mapear"] + list(df_p.columns))
-                taxas_map['trt'] = st.selectbox("Taxa TRT", ["Não mapear"] + list(df_p.columns))
-            with t2:
-                taxas_map['adv_m'] = st.selectbox("Ad Valorem Mínimo", ["Não mapear"] + list(df_p.columns))
-                taxas_map['tda'] = st.selectbox("Taxa TDA", ["Não mapear"] + list(df_p.columns))
-            with t3:
-                taxas_map['tas'] = st.selectbox("TAS", ["Não mapear"] + list(df_p.columns))
-                taxas_map['seccat'] = st.selectbox("Taxa SEC-CAT", ["Não mapear"] + list(df_p.columns))
+            st.markdown("#### ➕ Peso Adicional (Excedente)")
+            r_exc1, r_exc2 = st.columns(2)
+            with r_exc1: exc_start = st.number_input("A partir de (kg):", value=101)
+            with r_exc2: exc_col = st.selectbox("Coluna do valor por Kg adicional", df_p.columns)
+
+            st.markdown("#### 💰 Mapeamento de Taxas")
+            tx_cols = st.columns(3)
+            m_taxas = {}
+            lista_tx = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
+            for idx, tx in enumerate(lista_tx):
+                with tx_cols[idx % 3]:
+                    m_taxas[tx] = st.selectbox(tx, ["Não mapear"] + list(df_p.columns))
 
             if st.button("💾 Salvar Transportadora"):
-                mapa_completo = {"faixas": faixas_map, "taxas": taxas_map, "col_sigla_f": "SIGLA", "col_cid_c": "MUNICIPIO"} # Exemplo
-                salvar_transp(nome_t, df_p, df_c, mapa_completo)
-                st.success("Transportadora salva!")
+                mapa = {"faixas": faixas, "excedente": {"start": exc_start, "col": exc_col}, "taxas": m_taxas}
+                conn = sqlite3.connect('comparativo_v4.db')
+                conn.execute("INSERT INTO transportadoras (nome, tabela_json, cidades_json, mapeamento_json) VALUES (?,?,?,?)",
+                             (t_nome.upper(), df_p.to_json(), df_c.to_json(), json.dumps(mapa)))
+                conn.commit()
+                conn.close()
+                st.success("Salvo!")
 
     st.markdown("---")
-    st.subheader("📋 Transportadoras Cadastradas")
-    df_lista = listar_transp()
-    for _, item in df_lista.iterrows():
-        c_list = st.columns([3, 2, 2, 1, 1])
-        c_list[0].write(f"**{item['nome']}**")
-        c_list[1].write("📁 Tabela_Frete.xlsx")
-        c_list[2].write("📁 Cidades.xlsx")
-        if c_list[3].button("✏️", key=f"edit_{item['id']}"): st.info("Remapeamento em breve")
-        if c_list[4].button("🗑️", key=f"del_{item['id']}"): st.error("Excluído")
-
-# --- ABA 3: COMPARATIVO (COTAÇÃO) ---
-elif menu == "💰 Comparativo (Cotação)":
-    st.subheader("💰 Realizar Novo Comparativo de Tabelas")
+    st.subheader("📋 Tabelas Cadastradas")
+    conn = sqlite3.connect('comparativo_v4.db')
+    df_t = pd.read_sql_query("SELECT id, nome FROM transportadoras", conn)
+    conn.close()
     
-    # Planilha Base Fixa
-    f_base = st.file_uploader("Subir Planilha Base (Sempre no mesmo formato)", type=["xlsx"])
+    for i, r in df_t.iterrows():
+        c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
+        c1.write(f"🏢 **{r['nome']}**")
+        c2.write("✅ Configurada")
+        if c3.button("✏️", key=f"ed{r['id']}"): st.warning("Use o modo adicionar para sobrescrever")
+        if c4.button("🗑️", key=f"rm{r['id']}"): 
+            excluir_transp(r['id'])
+            st.rerun()
+
+# TELA 3: COMPARATIVO (COTAÇÃO)
+elif menu == "💰 Novo Comparativo":
+    st.title("💰 Cotação e Comparativo")
+    
+    f_base = st.file_uploader("1. Subir Planilha Base (Notas)", type=["xlsx"])
+    
     if f_base:
-        st.success("Planilha Base carregada e fixada no topo.")
+        st.info("Arquivo Base carregado com sucesso.")
+        conn = sqlite3.connect('comparativo_v4.db')
+        lista_t = pd.read_sql_query("SELECT nome FROM transportadoras", conn)['nome'].tolist()
+        conn.close()
         
-        # Seleção de Transportadora
-        lista_t = listar_transp()
-        t_alvo = st.selectbox("Selecione a Transportadora para Cotação", lista_t['nome'].tolist())
+        t_alvo = st.selectbox("2. Selecionar Transportadora para Cotar", lista_t)
         
-        if st.button("🧧 Gerar Cotação"):
-            # Aqui entra a lógica de cálculo usando as faixas dinâmicas e TRT/TDA
-            data_agora = datetime.now().strftime("%d/%m/%Y %H:%M")
-            st.success(f"Cotação realizada em {data_agora}")
-            
+        if st.button("🚀 Gerar Cotação"):
+            # Lógica de cálculo seria inserida aqui
+            now = datetime.now().strftime("%d/%m/%Y %H:%M")
+            conn = sqlite3.connect('comparativo_v4.db')
+            conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd) VALUES (?,?,?,?)", 
+                         (now, t_alvo, 1500.00, 10)) # Exemplo
+            conn.commit()
+            conn.close()
+            st.success("Cotação Finalizada!")
+
     st.divider()
-    st.subheader("📜 Histórico de Cotações Realizadas")
-    # Exemplo de listagem com expander
-    with st.expander("🔽 Cotação #125 - JAMEF - 15/04/2024 10:00"):
-        st.write("Qtd Notas: 150 | Valor Total: R$ 12.450,00")
-        st.button("📥 Baixar Excel desta cotação")
-        # Aqui viria a tabela com o botão do "olho"
+    st.subheader("📜 Histórico de Cotações")
+    conn = sqlite3.connect('comparativo_v4.db')
+    df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn)
+    conn.close()
+
+    for i, r in df_h.iterrows():
+        with st.expander(f"📅 {r['data_hora']} | {r['transportadora']} | Total: R$ {r['total']:.2f}"):
+            st.write(f"Quantidade de Notas: {r['qtd']}")
+            col_b1, col_b2 = st.columns(2)
+            col_b1.button("📥 Baixar Excel", key=f"dl{r['id']}")
+            if col_b2.button("🗑️ Excluir Cotação", key=f"delc{r['id']}"):
+                excluir_cotacao(r['id'])
+                st.rerun()
