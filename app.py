@@ -17,6 +17,7 @@ st.markdown("""
     [data-testid="stMetricValue"] div { color: #1E88E5 !important; }
     [data-testid="stSidebar"] { background-color: #F8F9FA !important; }
     [data-testid="stSidebar"] * { color: #000000 !important; font-weight: 600; }
+    .expander-header { font-weight: bold; color: #1E88E5; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -51,7 +52,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("NAVEGAÇÃO", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (BI COM FILTROS) ---
+# --- DASHBOARD (CORREÇÃO DE CONTAGEM E MOEDA) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -59,9 +60,11 @@ if menu == "📊 Dashboard":
     conn.close()
 
     if not df_h.empty:
-        resumos_base = []
-        for r in df_h['estado_resumo']: resumos_base.extend(json.loads(r))
-        df_base_filtros = pd.DataFrame(resumos_base)
+        resumos_all = []
+        for _, row in df_h.iterrows():
+            items = json.loads(row['estado_resumo'])
+            resumos_all.extend(items)
+        df_base_filtros = pd.DataFrame(resumos_all)
 
         st.markdown("### 🔍 Filtros do BI")
         f1, f2 = st.columns(2)
@@ -74,8 +77,8 @@ if menu == "📊 Dashboard":
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {df_final_bi['Valor'].sum():,.2f}")
-        c2.metric("Notas Processadas", f"{len(df_final_bi)}")
-        c3.metric("Ticket Médio", f"R$ {df_final_bi['Valor'].mean():,.2f}" if not df_final_bi.empty else "0.00")
+        c2.metric("Notas Processadas", f"{len(df_final_bi)}") # Agora dinâmico
+        c3.metric("Ticket Médio", f"R$ {df_final_bi['Valor'].mean():,.2f}" if not df_final_bi.empty else "R$ 0.00")
 
         st.subheader("📋 Consolidado por UF")
         if not df_final_bi.empty:
@@ -99,18 +102,13 @@ elif menu == "🚛 Transportadoras":
             faixas = []
             for i in range(int(n_f)):
                 r = st.columns(3)
-                mi = r[0].number_input(f"De (kg)", key=f"mi{i}")
-                ma = r[1].number_input(f"Até (kg)", key=f"ma{i}")
-                co = r[2].selectbox(f"Coluna Tabela", cols_t, key=f"co{i}")
-                faixas.append({"min": mi, "max": ma, "col": co})
+                faixas.append({"min": r[0].number_input(f"De (kg)", key=f"mi{i}"), 
+                               "max": r[1].number_input(f"Até (kg)", key=f"ma{i}"), 
+                               "col": r[2].selectbox(f"Coluna Tabela", cols_t, key=f"co{i}")})
             
             st.markdown("### 💰 Taxas Adicionais")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
-            m_taxas = {}
-            t_cols = st.columns(3)
-            for idx, tx in enumerate(taxas_nomes):
-                with t_cols[idx % 3]:
-                    m_taxas[tx] = st.selectbox(tx, cols_t, key=f"tx_{tx}")
+            m_taxas = {tx: st.selectbox(tx, cols_t, key=f"tx_{tx}") for tx in taxas_nomes}
 
             if st.button("💾 Salvar Configuração"):
                 mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra}
@@ -122,7 +120,7 @@ elif menu == "🚛 Transportadoras":
     st.markdown("### 📋 Transportadoras Cadastradas")
     conn = sqlite3.connect(DB_NAME)
     ts = pd.read_sql_query("SELECT id, nome FROM transportadoras", conn)
-    for idx, row in ts.iterrows():
+    for _, row in ts.iterrows():
         c1, c2 = st.columns([8, 2])
         c1.write(f"**{row['nome']}**")
         if c2.button("🗑️ Excluir", key=f"del_t_{row['id']}"):
@@ -130,7 +128,7 @@ elif menu == "🚛 Transportadoras":
             conn.commit(); conn.close(); st.rerun()
     conn.close()
 
-# --- COMPARATIVO (COM LÓGICA DE CÁLCULO CORRIGIDA) ---
+# --- COMPARATIVO (EXPANSÍVEL E DETALHADO) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Comparativo")
     f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
@@ -147,8 +145,7 @@ elif menu == "💰 Comparativo":
             df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
             mapa = json.loads(t_row['mapeamento_json'])
             
-            res_final = []
-            resumo_uf = {}
+            res_final = []; resumo_uf = {}
             for _, nf in df_b.iterrows():
                 try:
                     cidade_nf = str(nf.iloc[2]).upper().strip()
@@ -156,57 +153,55 @@ elif menu == "💰 Comparativo":
                     sigla = df_cid_ref[df_cid_ref.iloc[:,0].astype(str).str.upper() == cidade_nf].iloc[0, 2]
                     precos = df_tab[df_tab.iloc[:,2] == sigla].iloc[0]
                     
-                    # 1. Frete Peso
-                    f_peso = 0.0; ultima_max = 0; col_u = ""; dentro = False
+                    f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
-                        ultima_max = f['max']; col_u = f['col']
+                        u_max, u_col = f['max'], f['col']
                         if peso_nf <= f['max'] and f['col'] != "Não mapear":
-                            f_peso = float(precos[f['col']]); dentro = True; break
-                    if not dentro and mapa.get('kg_extra') != "Não mapear":
-                        f_peso = float(precos[col_u]) + ((peso_nf - ultima_max) * float(precos[mapa['kg_extra']]))
+                            f_peso = float(precos[f['col']]); d = True; break
+                    if not d and mapa.get('kg_extra') != "Não mapear":
+                        f_peso = float(precos[u_col]) + ((peso_nf - u_max) * float(precos[mapa['kg_extra']]))
                     
-                    # 2. Taxas
                     def gv(n): return float(precos[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
                     
-                    # CORREÇÃO: Taxas baseadas no valor da NF e arredondamento de pedágio
                     v_adv = max(valor_nf * (gv("Ad Valorem %")), gv("Ad Valorem Min"))
                     v_gris = max(valor_nf * (gv("Gris %")), gv("Gris Min"))
                     v_emex = max(valor_nf * (gv("Emex %")), gv("Emex Min"))
                     v_pedagio = math.ceil(peso_nf / 100) * gv("Pedagio")
+                    v_fixas = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
                     
-                    # Soma final exata conforme regra Jamef
-                    total_nota = f_peso + v_adv + v_gris + v_emex + v_pedagio + \
-                                 gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
-                    
-                    nf['VALOR_SISTEMA'] = total_nota
-                except: nf['VALOR_SISTEMA'] = 0.0
-                res_final.append(nf.to_dict())
-                uf_atual = nf.iloc[3]
-                resumo_uf[uf_atual] = resumo_uf.get(uf_atual, 0) + nf['VALOR_SISTEMA']
+                    nf['VALOR_SISTEMA'] = f_peso + v_adv + v_gris + v_emex + v_pedagio + v_fixas
+                    nf['MEMORIA_CALCULO'] = f"Frete Peso: {f_peso:.2f} | AdVal: {v_adv:.2f} | Gris: {v_gris:.2f} | Pedágio: {v_pedagio:.2f} | Taxas Fixas: {v_fixas:.2f}"
+                except: nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro no cálculo"
+                res_final.append(nf.to_dict()); uf = nf.iloc[3]
+                resumo_uf[uf] = resumo_uf.get(uf, 0) + nf['VALOR_SISTEMA']
             
             df_res = pd.DataFrame(res_final)
-            res_json = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
+            res_j = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
-                         (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(), json.dumps(res_json)))
+                         (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(), json.dumps(res_j)))
             conn.commit(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
 
     st.markdown("### 📄 Histórico de Cotações")
-    df_h = pd.read_sql_query("SELECT id, data_hora, transportadora, total, qtd FROM cotacoes ORDER BY id DESC", conn)
+    df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn)
     for _, row in df_h.iterrows():
-        c1, c2, c3, c4 = st.columns([3, 2, 2, 3])
-        c1.write(f"📅 {row['data_hora']} - **{row['transportadora']}**")
-        c2.write(f"📦 Qtd: **{row['qtd']}**")
-        c3.write(f"R$ {row['total']:,.2f}")
-        btns = c4.columns(2)
-        
-        # Download Excel
-        detalhes = pd.read_sql_query(f"SELECT detalhes_json FROM cotacoes WHERE id={row['id']}", conn).iloc[0]['detalhes_json']
-        df_dl = pd.read_json(io.StringIO(detalhes))
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer: df_dl.to_excel(writer, index=False)
-        btns[0].download_button("📂 Excel", output.getvalue(), f"cotacao_{row['id']}.xlsx", key=f"dl_{row['id']}")
-        
-        if btns[1].button("🗑️ Excluir", key=f"del_c_{row['id']}"):
-            conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],))
-            conn.commit(); conn.close(); st.rerun()
+        with st.expander(f"🔽 {row['data_hora']} - {row['transportadora']} | Notas: {row['qtd']} | R$ {row['total']:,.2f}"):
+            c_header = st.columns([8, 2])
+            df_detalhe = pd.read_json(io.StringIO(row['detalhes_json']))
+            
+            # Botões de Ação do Grupo
+            out = io.BytesIO()
+            with pd.ExcelWriter(out, engine='xlsxwriter') as wr: df_detalhe.to_excel(wr, index=False)
+            c_header[0].download_button("📥 Baixar Planilha Completa", out.getvalue(), f"cotacao_{row['id']}.xlsx", key=f"dl_{row['id']}")
+            if c_header[1].button("🗑️ Excluir Lote", key=f"del_c_{row['id']}"):
+                conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],))
+                conn.commit(); conn.close(); st.rerun()
+            
+            st.divider()
+            # Lista de Notas com o "Olho"
+            for idx, n_row in df_detalhe.iterrows():
+                col_n1, col_n2, col_n3 = st.columns([5, 2, 3])
+                col_n1.write(f"📄 NF: {n_row.iloc[0]} - {n_row.iloc[2]}/{n_row.iloc[3]}")
+                col_n2.write(f"**R$ {n_row['VALOR_SISTEMA']:,.2f}**")
+                if col_n3.button("👁️ Ver Cálculo", key=f"view_{row['id']}_{idx}"):
+                    st.info(f"**Detalhes do Cálculo:**\n\n{n_row.get('MEMORIA_CALCULO', 'Sem dados')}")
     conn.close()
