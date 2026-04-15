@@ -6,7 +6,7 @@ import io
 from datetime import datetime
 import math
 
-# 1. Configuração de Layout
+# 1. Configuração de Layout (Exatamente como você aprovou)
 st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
 
 st.markdown("""
@@ -34,7 +34,7 @@ init_db()
 if 'view_details' not in st.session_state: st.session_state.view_details = {}
 if 'edit_id' not in st.session_state: st.session_state.edit_id = None
 
-# --- SIDEBAR ---
+# --- SIDEBAR (Padrão Aprovado) ---
 with st.sidebar:
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
@@ -70,10 +70,8 @@ if menu == "📊 Dashboard":
         c2.metric("Notas Processadas", f"{len(df_bi)}") 
         c3.metric("Ticket Médio", f"R$ {df_bi['VALOR_SISTEMA'].mean():,.2f}" if len(df_bi) > 0 else "R$ 0,00")
         st.dataframe(df_bi.pivot_table(index="UF", columns="Transportadora_Ref", values="VALOR_SISTEMA", aggfunc="sum").fillna(0), use_container_width=True)
-    else:
-        st.info("Nenhuma cotação disponível.")
 
-# --- TRANSPORTADORAS ---
+# --- TRANSPORTADORAS (Com Mapping Flexível) ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     is_editing = st.session_state.edit_id is not None
@@ -87,10 +85,10 @@ elif menu == "🚛 Transportadoras":
             conn.close()
             mapa_previo = json.loads(edit_data['mapeamento_json'])
 
-        t_nome = st.text_input("Nome da Transportadora", value=edit_data['nome'] if is_editing else "").upper()
-        col1, col2 = st.columns(2)
-        f_tab = col1.file_uploader("Arquivo de Tabela de Preços", type=["xlsx"])
-        f_cid = col2.file_uploader("Arquivo de Apoio (Cidades/Siglas)", type=["xlsx"])
+        t_nome = st.text_input("Nome", value=edit_data['nome'] if is_editing else "").upper()
+        c1, c2 = st.columns(2)
+        f_tab = c1.file_uploader("Tabela Preços", type=["xlsx"])
+        f_cid = c2.file_uploader("Planilha de Apoio (Cidades)", type=["xlsx"])
         
         df_t = pd.read_excel(f_tab).fillna(0) if f_tab else (pd.read_json(io.StringIO(edit_data['tabela_json'])) if is_editing else None)
         df_c = pd.read_excel(f_cid).fillna(0) if f_cid else (pd.read_json(io.StringIO(edit_data['cidades_json'])) if is_editing else None)
@@ -99,19 +97,20 @@ elif menu == "🚛 Transportadoras":
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             cols_c = ["Não mapear"] + [str(c) for c in df_c.columns]
             
-            st.subheader("📍 Mapeamento Geográfico (Planilha de Apoio)")
-            c_geo1, c_geo2 = st.columns(2)
-            m_col_cid = c_geo1.selectbox("Qual coluna é a CIDADE?", cols_c, index=cols_c.index(str(mapa_previo.get('col_cid'))) if str(mapa_previo.get('col_cid')) in cols_c else 0)
-            m_col_sigla = c_geo2.selectbox("Qual coluna é a SIGLA/REGIÃO?", cols_c, index=cols_c.index(str(mapa_previo.get('col_sigla'))) if str(mapa_previo.get('col_sigla')) in cols_c else 0)
+            st.subheader("📍 Mapeamento de Colunas (Interpretação Dinâmica)")
+            m1, m2 = st.columns(2)
+            # Aqui o sistema aprende quais colunas usar da planilha de cidades
+            m_col_cid = m1.selectbox("Coluna da Cidade", cols_c, index=cols_c.index(str(mapa_previo.get('col_cid'))) if str(mapa_previo.get('col_cid')) in cols_c else 0)
+            m_col_sigla = m2.selectbox("Coluna da Sigla (Ex: Capital/Interior)", cols_c, index=cols_c.index(str(mapa_previo.get('col_sigla'))) if str(mapa_previo.get('col_sigla')) in cols_c else 0)
 
-            st.subheader("⚖️ Regras de Preço (Tabela de Transportadora)")
-            col_kg_extra = st.selectbox("Coluna do Kg Adicional", cols_t, index=cols_t.index(str(mapa_previo.get('kg_extra'))) if str(mapa_previo.get('kg_extra')) in cols_t else 0)
-            n_f = st.number_input("Qtd Faixas de Peso", 1, 50, len(mapa_previo['faixas']) if is_editing else 6)
+            st.subheader("⚖️ Pesos e Taxas")
+            col_kg_extra = st.selectbox("Kg Adicional", cols_t, index=cols_t.index(str(mapa_previo.get('kg_extra'))) if str(mapa_previo.get('kg_extra')) in cols_t else 0)
+            n_f = st.number_input("Qtd Faixas", 1, 50, len(mapa_previo['faixas']) if is_editing else 6)
             faixas = []
             for i in range(int(n_f)):
                 r = st.columns(3)
                 f_ini = mapa_previo['faixas'][i] if is_editing and i < len(mapa_previo['faixas']) else {}
-                faixas.append({"min": r[0].number_input(f"De kg", value=float(f_ini.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input(f"Até kg", value=float(f_ini.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox(f"Coluna na Tabela", cols_t, index=cols_t.index(str(f_ini.get('col'))) if str(f_ini.get('col')) in cols_t else 0, key=f"co{i}")})
+                faixas.append({"min": r[0].number_input(f"De", value=float(f_ini.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input(f"Até", value=float(f_ini.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox(f"Coluna", cols_t, index=cols_t.index(str(f_ini.get('col'))) if str(f_ini.get('col')) in cols_t else 0, key=f"co{i}")})
             
             taxas_n = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
             m_taxas = {}; tx_cols = st.columns(3)
@@ -119,12 +118,13 @@ elif menu == "🚛 Transportadoras":
                 s_tx = str(mapa_previo.get('taxas', {}).get(tx, "Não mapear"))
                 m_taxas[tx] = tx_cols[idx % 3].selectbox(tx, cols_t, index=cols_t.index(s_tx) if s_tx in cols_t else 0, key=f"tx_{tx}")
 
-            if st.button("💾 Salvar Configurações"):
+            if st.button("💾 Salvar"):
                 mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra, "col_cid": m_col_cid, "col_sigla": m_col_sigla}
                 conn = sqlite3.connect(DB_NAME)
                 conn.execute("UPDATE transportadoras SET nome=?, tabela_json=?, cidades_json=?, mapeamento_json=? WHERE id=?" if is_editing else "INSERT INTO transportadoras (nome, tabela_json, cidades_json, mapeamento_json) VALUES (?,?,?,?)", (t_nome, df_t.to_json(), df_c.to_json(), json.dumps(mapa), st.session_state.edit_id) if is_editing else (t_nome, df_t.to_json(), df_c.to_json(), json.dumps(mapa)))
                 conn.commit(); conn.close(); st.session_state.edit_id = None; st.rerun()
 
+    st.markdown("### 📋 Lista")
     conn = sqlite3.connect(DB_NAME); ts = pd.read_sql_query("SELECT id, nome FROM transportadoras", conn); conn.close()
     for _, row in ts.iterrows():
         c1, c2, c3 = st.columns([7, 1.5, 1.5])
@@ -133,27 +133,25 @@ elif menu == "🚛 Transportadoras":
         if c3.button("🗑️", key=f"dl_{row['id']}"):
             conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM transportadoras WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
 
-# --- COMPARATIVO ---
+# --- COMPARATIVO (Usa o Mapeamento Dinâmico) ---
 elif menu == "💰 Comparativo":
-    st.title("💰 Novo Cálculo de Frete")
-    f_base = st.file_uploader("📥 Planilha de Notas Fiscais", type=["xlsx"])
+    st.title("💰 Novo Cálculo")
+    f_base = st.file_uploader("📥 Notas Fiscais", type=["xlsx"])
     conn = sqlite3.connect(DB_NAME); ts = pd.read_sql_query("SELECT * FROM transportadoras", conn); conn.close()
     
     if not ts.empty:
-        t_alvo = st.selectbox("Selecione a Transportadora", ts['nome'].tolist())
-        if f_base and st.button("🚀 Calcular Fretes"):
+        t_alvo = st.selectbox("Transportadora", ts['nome'].tolist())
+        if f_base and st.button("🚀 Calcular"):
             df_b = pd.read_excel(f_base).fillna(0); t_row = ts[ts['nome'] == t_alvo].iloc[0]
             df_tab = pd.read_json(io.StringIO(t_row['tabela_json']))
             df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
             mapa = json.loads(t_row['mapeamento_json'])
             
-            # 1. Identifica Cidade na NF (3ª coluna)
             df_b['BUSCA_NF'] = df_b.iloc[:, 2].astype(str).str.upper().str.strip()
-            
-            # 2. Busca Sigla na Planilha de Apoio conforme mapeamento
             c_cid = mapa.get('col_cid'); c_sig = mapa.get('col_sigla')
+            
             if c_cid == "Não mapear" or c_sig == "Não mapear":
-                st.error("ERRO: Configure as colunas de Cidade/Sigla na aba Transportadoras."); st.stop()
+                st.error("Configure o mapeamento de colunas na aba Transportadoras."); st.stop()
 
             df_cid_ref['BUSCA_REF'] = df_cid_ref[c_cid].astype(str).str.upper().str.strip()
             df_proc = pd.merge(df_b, df_cid_ref[['BUSCA_REF', c_sig]], left_on='BUSCA_NF', right_on='BUSCA_REF', how='left')
@@ -161,12 +159,10 @@ elif menu == "💰 Comparativo":
             res = []
             for _, nf in df_proc.iterrows():
                 try:
-                    peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7]); sigla_encontrada = str(nf[c_sig])
+                    peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7]); sigla = str(nf[c_sig])
+                    # Busca a sigla na primeira coluna da tabela de preços
+                    linha_preco = df_tab[df_tab.iloc[:,0].astype(str).str.upper().str.strip() == sigla.upper().strip()].iloc[0]
                     
-                    # 3. Localiza a Sigla na Tabela de Preços (Sempre na 1ª coluna da tabela)
-                    linha_preco = df_tab[df_tab.iloc[:,0].astype(str).str.upper().str.strip() == sigla_encontrada.upper().strip()].iloc[0]
-                    
-                    # 4. Cálculo de Faixa de Peso
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
                         u_max, u_col = f['max'], f['col']
@@ -176,21 +172,15 @@ elif menu == "💰 Comparativo":
                         f_peso = float(linha_preco[u_col]) + ((peso_nf - u_max) * float(linha_preco[mapa['kg_extra']]))
                     
                     def gv(n): return float(linha_preco[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
-                    
-                    v_adv = max(valor_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
-                    v_gr = max(valor_nf * gv("Gris %"), gv("Gris Min"))
-                    v_em = max(valor_nf * gv("Emex %"), gv("Emex Min"))
-                    v_pe = math.ceil(peso_nf / 100) * gv("Pedagio")
-                    
-                    total = f_peso + v_adv + v_gr + v_em + v_pe + gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
+                    total = f_peso + max(valor_nf * gv("Ad Valorem %"), gv("Ad Valorem Min")) + max(valor_nf * gv("Gris %"), gv("Gris Min")) + (math.ceil(peso_nf/100)*gv("Pedagio")) + gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
                     nf['VALOR_SISTEMA'] = total
-                    nf['MEMORIA_CALCULO'] = f"Sigla: {sigla_encontrada} | Frete Peso: {f_peso:.2f}"
+                    nf['MEMORIA_CALCULO'] = f"Sigla: {sigla} | Frete Peso: {f_peso:.2f}"
                 except:
-                    nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Cidade ou Sigla não mapeada na Tabela de Preços."
+                    nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro: Sigla ou Cidade não encontrada."
                 res.append(nf.to_dict())
 
             df_res = pd.DataFrame(res)
-            st.success(f"✅ Cálculo finalizado para {len(df_res)} notas."); st.dataframe(df_res, use_container_width=True)
+            st.dataframe(df_res, use_container_width=True)
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine='xlsxwriter') as writer: df_res.to_excel(writer, index=False)
-            st.download_button("📥 Baixar Planilha de Fretes", out.getvalue(), f"Frete_{t_alvo}.xlsx")
+            st.download_button("📥 Baixar Resultados", out.getvalue(), "resultado.xlsx")
