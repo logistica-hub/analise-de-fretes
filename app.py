@@ -31,8 +31,11 @@ def init_db():
 
 init_db()
 
-if 'view_details' not in st.session_state: st.session_state.edit_id = None
-if 'edit_id' not in st.session_state: st.session_state.edit_id = None
+# INICIALIZAÇÃO CORRETA DOS ESTADOS (Evita o AttributeError)
+if 'view_details' not in st.session_state: 
+    st.session_state.view_details = {}
+if 'edit_id' not in st.session_state: 
+    st.session_state.edit_id = None
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -49,7 +52,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (LOGICA DE B.I. REAL) ---
+# --- DASHBOARD (ESTILO B.I. REAL - CONTAGEM DE NOTAS) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -57,49 +60,40 @@ if menu == "📊 Dashboard":
     conn.close()
 
     if not df_h.empty:
-        # AQUI ESTÁ O SEGREDO: Vamos carregar TODAS as notas individuais de todos os cálculos
-        notas_individuais = []
+        # AQUI RESOLVEMOS O PROBLEMA DO 18: 
+        # Carregamos todas as notas de todos os lotes para o BI poder filtrar nota por nota
+        todas_notas = []
         for _, row in df_h.iterrows():
-            detalhes = json.loads(row['detalhes_json'])
-            # Se detalhes for um dicionário (formato record do pandas), transformamos em lista
-            if isinstance(detalhes, dict):
-                temp_df = pd.DataFrame(detalhes)
-                temp_df['Transportadora'] = row['transportadora']
-                notas_individuais.append(temp_df)
-            else:
-                temp_df = pd.DataFrame(detalhes)
-                temp_df['Transportadora'] = row['transportadora']
-                notas_individuais.append(temp_df)
+            notas_lote = pd.read_json(io.StringIO(row['detalhes_json']))
+            notas_lote['Transportadora_Ref'] = row['transportadora']
+            # Garante que a coluna de UF exista (geralmente índice 3)
+            if 'UF' not in notas_lote.columns:
+                notas_lote['UF'] = notas_lote.iloc[:, 3]
+            todas_notas.append(notas_lote)
         
-        df_completo_bi = pd.concat(notas_individuais, ignore_index=True)
-        
-        # Mapeando a coluna de UF (Geralmente é a 4ª coluna da planilha original, índice 3)
-        # Vamos garantir que o DataFrame tenha uma coluna 'UF' clara para o filtro
-        if 'UF' not in df_completo_bi.columns:
-            df_completo_bi['UF'] = df_completo_bi.iloc[:, 3] 
+        df_bi = pd.concat(todas_notas, ignore_index=True)
 
         st.markdown("### 🔍 Filtros Dinâmicos")
         f1, f2 = st.columns(2)
-        filtro_t = f1.multiselect("Transportadora", df_completo_bi['Transportadora'].unique())
-        filtro_uf = f2.multiselect("Estado (UF)", sorted(df_completo_bi['UF'].unique()))
+        filtro_t = f1.multiselect("Transportadora", df_bi['Transportadora_Ref'].unique())
+        filtro_uf = f2.multiselect("Estado (UF)", sorted(df_bi['UF'].unique()))
         
-        df_filtrado = df_completo_bi.copy()
-        if filtro_t: df_filtrado = df_filtrado[df_filtrado['Transportadora'].isin(filtro_t)]
+        df_filtrado = df_bi.copy()
+        if filtro_t: df_filtrado = df_filtrado[df_filtrado['Transportadora_Ref'].isin(filtro_t)]
         if filtro_uf: df_filtrado = df_filtrado[df_filtrado['UF'].isin(filtro_uf)]
 
-        # MÉTRICAS QUE OLHAM PARA AS NOTAS E NÃO PARA AS LINHAS DO DASHBOARD
+        # MÉTRICAS: Agora o len(df_filtrado) é a contagem real de Notas Fiscais!
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {df_filtrado['VALOR_SISTEMA'].sum():,.2f}")
-        # AGORA SIM: Conta a quantidade de notas fiscais (linhas de notas)
         c2.metric("Notas Processadas", f"{len(df_filtrado)}") 
         c3.metric("Ticket Médio", f"R$ {df_filtrado['VALOR_SISTEMA'].mean():,.2f}" if len(df_filtrado) > 0 else "R$ 0,00")
 
         if not df_filtrado.empty:
-            st.subheader("📋 Consolidado por Estado")
-            resumo_view = df_filtrado.pivot_table(index="UF", columns="Transportadora", values="VALOR_SISTEMA", aggfunc="sum").fillna(0)
-            st.dataframe(resumo_view, use_container_width=True)
+            st.subheader("📋 Resumo por Estado")
+            pivot = df_filtrado.pivot_table(index="UF", columns="Transportadora_Ref", values="VALOR_SISTEMA", aggfunc="sum").fillna(0)
+            st.dataframe(pivot, use_container_width=True)
     else:
-        st.info("Realize um cálculo no menu 'Comparativo' para ver os dados aqui.")
+        st.info("Nenhuma cotação encontrada.")
 
 # --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
@@ -200,6 +194,7 @@ elif menu == "💰 Comparativo":
                     sigla = df_cid_ref[df_cid_ref.iloc[:,0].astype(str).str.upper() == cidade_nf].iloc[0, 2]
                     precos = df_tab[df_tab.iloc[:,2] == sigla].iloc[0]
                     
+                    # Frete Peso
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
                         u_max, u_col = f['max'], f['col']
@@ -215,13 +210,12 @@ elif menu == "💰 Comparativo":
                     v_emex = max(valor_nf * (gv("Emex %")), gv("Emex Min"))
                     v_pedagio = math.ceil(peso_nf / 100) * gv("Pedagio")
                     
-                    # Taxas Fixas Detalhadas
+                    # TAXAS INDIVIDUAIS PARA O DETALHAMENTO
                     t_tas = gv("TAS"); t_ctrc = gv("CTRC"); t_trt = gv("TRT"); t_tda = gv("TDA"); t_sec = gv("SEC-CAT")
                     
-                    total_nf = f_peso + v_adv + v_gris + v_emex + v_pedagio + t_tas + t_ctrc + t_trt + t_tda + t_sec
-                    nf['VALOR_SISTEMA'] = total_nf
+                    nf['VALOR_SISTEMA'] = f_peso + v_adv + v_gris + v_emex + v_pedagio + t_tas + t_ctrc + t_trt + t_tda + t_sec
                     
-                    # MEMÓRIA DETALHADA
+                    # MEMÓRIA CONSTRUIDA TAXA A TAXA
                     nf['MEMORIA_CALCULO'] = (f"Frete Peso: R$ {f_peso:.2f}\n"
                                             f"Ad Valorem: R$ {v_adv:.2f}\n"
                                             f"Gris: R$ {v_gris:.2f}\n"
@@ -240,6 +234,7 @@ elif menu == "💰 Comparativo":
             
             df_res = pd.DataFrame(res_final)
             res_j = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
+            # Salva orientando por records para facilitar a leitura no Dashboard
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
                          (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(orient='records'), json.dumps(res_j)))
             conn.commit(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
