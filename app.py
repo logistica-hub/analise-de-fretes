@@ -95,7 +95,7 @@ elif menu == "🚛 Transportadoras":
     
     with st.expander("📝 Configurar Mapeamento", expanded=is_editing):
         edit_data = None
-        mapa_previo = {"faixas": [], "taxas": {}, "kg_extra": "Não mapear"}
+        mapa_previo = {"faixas": [], "taxas": {}, "kg_extra": "Não mapear", "col_sigla_cid": "Não mapear"}
         if is_editing:
             conn = sqlite3.connect(DB_NAME)
             edit_data = pd.read_sql_query(f"SELECT * FROM transportadoras WHERE id={st.session_state.edit_id}", conn).iloc[0]
@@ -104,17 +104,26 @@ elif menu == "🚛 Transportadoras":
 
         t_nome = st.text_input("Nome da Transportadora", value=edit_data['nome'] if is_editing else "").upper()
         col1, col2 = st.columns(2)
-        f_tab = col1.file_uploader("Arquivo de Tabela (Excel)", type=["xlsx"])
-        f_cid = col2.file_uploader("Arquivo de Cidades (Excel)", type=["xlsx"])
+        f_tab = col1.file_uploader("Arquivo de Tabela de Preços (Excel)", type=["xlsx"])
+        f_cid = col2.file_uploader("Arquivo de Cidades/Siglas (Excel)", type=["xlsx"])
         
-        df_t = None
+        df_t = None; df_c = None
         if f_tab: df_t = pd.read_excel(f_tab).fillna(0)
         elif is_editing: df_t = pd.read_json(io.StringIO(edit_data['tabela_json']))
 
-        if df_t is not None:
+        if f_cid: df_c = pd.read_excel(f_cid).fillna(0)
+        elif is_editing: df_c = pd.read_json(io.StringIO(edit_data['cidades_json']))
+
+        if df_t is not None and df_c is not None:
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
+            cols_c = ["Não mapear"] + [str(c) for c in df_c.columns]
+            
             st.markdown("---")
-            st.subheader("⚖️ Faixas de Peso")
+            st.subheader("📍 Mapeamento de Cidades")
+            sel_sigla_cid = str(mapa_previo.get('col_sigla_cid', "Não mapear"))
+            col_sigla_cid = st.selectbox("Qual coluna da planilha de cidades contém a SIGLA/REGIÃO?", cols_c, index=cols_c.index(sel_sigla_cid) if sel_sigla_cid in cols_c else 0)
+
+            st.subheader("⚖️ Faixas de Peso (Na Tabela de Preços)")
             sel_kg = str(mapa_previo.get('kg_extra', "Não mapear"))
             col_kg_extra = st.selectbox("Coluna do Kg Adicional", cols_t, index=cols_t.index(sel_kg) if sel_kg in cols_t else 0)
             
@@ -139,10 +148,10 @@ elif menu == "🚛 Transportadoras":
                     m_taxas[tx] = st.selectbox(tx, cols_t, index=cols_t.index(s_tx) if s_tx in cols_t else 0, key=f"tx_{tx}")
 
             if st.button("💾 Salvar Transportadora"):
-                mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra}
+                mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra, "col_sigla_cid": col_sigla_cid}
                 conn = sqlite3.connect(DB_NAME)
                 json_tab = df_t.to_json()
-                json_cid = pd.read_excel(f_cid).to_json() if f_cid else (edit_data['cidades_json'] if is_editing else "{}")
+                json_cid = df_c.to_json()
                 if is_editing:
                     conn.execute("UPDATE transportadoras SET nome=?, tabela_json=?, cidades_json=?, mapeamento_json=? WHERE id=?",
                                  (t_nome, json_tab, json_cid, json.dumps(mapa), st.session_state.edit_id))
@@ -165,7 +174,7 @@ elif menu == "🚛 Transportadoras":
             conn.commit(); conn.close(); st.rerun()
     conn.close()
 
-# --- COMPARATIVO (OTIMIZADO) ---
+# --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Cálculo de Frete")
     f_base = st.file_uploader("📥 Subir Planilha de Notas", type=["xlsx"])
@@ -180,24 +189,33 @@ elif menu == "💰 Comparativo":
             df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
             mapa = json.loads(t_row['mapeamento_json'])
             
-            # --- MOTOR DE ALTA PERFORMANCE (Vetorização) ---
+            # --- MOTOR DE ALTA PERFORMANCE ---
             df_b['CIDADE_NF'] = df_b.iloc[:, 2].astype(str).str.upper().str.strip()
-            df_cid_ref.columns = ['CID_REF', 'CID_NOME', 'SIGLA']
-            df_cid_ref['CID_REF'] = df_cid_ref['CID_REF'].astype(str).str.upper().str.strip()
             
-            # Merge rápido das cidades
-            df_proc = pd.merge(df_b, df_cid_ref[['CID_REF', 'SIGLA']], left_on='CIDADE_NF', right_on='CID_REF', how='left')
+            # Identificar a coluna da Sigla dinamicamente
+            col_sigla = mapa.get('col_sigla_cid', "Não mapear")
+            if col_sigla == "Não mapear":
+                st.error("ERRO: Você precisa editar a Transportadora e mapear qual coluna é a SIGLA/REGIÃO.")
+                st.stop()
+
+            # Preparar o de-para de cidades
+            df_cid_ref['CIDADE_BUSCA'] = df_cid_ref.iloc[:, 0].astype(str).str.upper().str.strip()
+            
+            # Merge para trazer a sigla correspondente
+            df_proc = pd.merge(df_b, df_cid_ref[['CIDADE_BUSCA', col_sigla]], left_on='CIDADE_NF', right_on='CIDADE_BUSCA', how='left')
             
             res_final = []
             for _, nf in df_proc.iterrows():
                 try:
                     peso_nf = float(nf.iloc[6])
                     valor_nf = float(nf.iloc[7])
-                    sigla = nf['SIGLA']
+                    sigla = nf[col_sigla]
                     
-                    if pd.isna(sigla): raise ValueError("Cidade não mapeada")
+                    if pd.isna(sigla): raise ValueError("Cidade não encontrada")
                     
-                    precos = df_tab[df_tab.iloc[:,2] == sigla].iloc[0]
+                    # Localiza a linha de preço para aquela sigla na tabela de preços
+                    # Assume-se que a coluna 2 da tabela de preços é onde fica a sigla/região
+                    precos = df_tab[df_tab.iloc[:,2].astype(str).str.upper().str.strip() == str(sigla).upper().strip()].iloc[0]
                     
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
@@ -222,19 +240,18 @@ elif menu == "💰 Comparativo":
                         f"Emex      : R$ {v_emex:.2f}\nPedágio   : R$ {v_pedagio:.2f}\nTAS       : R$ {t_tas:.2f}\n"
                         f"CTRC      : R$ {t_ctrc:.2f}\nTRT       : R$ {t_trt:.2f}\nTDA       : R$ {t_tda:.2f}\nSEC-CAT   : R$ {t_sec:.2f}"
                     )
-                except:
+                except Exception as e:
                     nf['VALOR_SISTEMA'] = 0.0
-                    nf['MEMORIA_CALCULO'] = "Erro no mapeamento da cidade ou valores."
+                    nf['MEMORIA_CALCULO'] = f"Erro: {str(e)}"
                 
                 res_final.append(nf.to_dict())
 
             df_res = pd.DataFrame(res_final)
             resumo_uf = df_res.groupby(df_res.columns[3])['VALOR_SISTEMA'].sum().reset_index()
             resumo_uf.columns = ['UF', 'Valor']
-            res_j = resumo_uf.to_json(orient='records')
             
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
-                         (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(orient='records'), res_j))
+                         (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(orient='records'), resumo_uf.to_json(orient='records')))
             conn.commit()
             
             st.success(f"✅ Processamento concluído: **{len(df_res)} Notas Processadas**.")
@@ -260,7 +277,6 @@ elif menu == "💰 Comparativo":
             c_down.download_button("📥 Baixar este Lote", out_h.getvalue(), f"Lote_{row['id']}.xlsx", key=f"dl_{row['id']}")
             
             st.divider()
-            # Mostra apenas as 50 primeiras no histórico para não travar a página ao expandir
             for idx, n_row in df_det.head(50).iterrows():
                 cn1, cn2, cn3 = st.columns([5, 2, 3])
                 cn1.write(f"📄 NF: {n_row.iloc[0]} - {n_row.iloc[2]}")
