@@ -96,7 +96,6 @@ elif menu == "🚛 Transportadoras":
             cols_t = ["Não mapear"] + list(df_t.columns)
             
             st.markdown("### ⚖️ Faixas de Peso")
-            # Adicionado campo de Kg Adicional
             col_kg_extra = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t)
             
             n_f = st.number_input("Qtd Faixas", 1, 50, 6)
@@ -109,7 +108,8 @@ elif menu == "🚛 Transportadoras":
                 faixas.append({"min": mi, "max": ma, "col": co})
             
             st.markdown("### 💰 Taxas JAMEF")
-            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min"]
+            # Adicionadas as taxas TRT, TDA e SEC-CAT conforme solicitado
+            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
             m_taxas = {}
             t_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
@@ -117,12 +117,14 @@ elif menu == "🚛 Transportadoras":
                     m_taxas[tx] = st.selectbox(tx, cols_t, key=f"tx_{tx}")
 
             if st.button("💾 Salvar Configuração"):
-                # Salva o kg_extra no mapa
                 mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra}
                 conn = sqlite3.connect(DB_NAME)
                 conn.execute("INSERT INTO transportadoras (nome, tabela_json, cidades_json, mapeamento_json) VALUES (?,?,?,?)",
                              (t_nome, df_t.to_json(), pd.read_excel(f_cid).to_json(), json.dumps(mapa)))
-                conn.commit(); st.rerun()
+                conn.commit()
+                conn.close()
+                st.success(f"Transportadora {t_nome} salva com sucesso!")
+                st.rerun()
 
 # --- COMPARATIVO (MOTOR DE CÁLCULO JAMEF) ---
 elif menu == "💰 Comparativo":
@@ -167,25 +169,27 @@ elif menu == "💰 Comparativo":
                                 dentro_da_faixa = True
                                 break
                         
-                        # Se ultrapassar a última faixa, calcula excedente
                         if not dentro_da_faixa and mapa.get('kg_extra') != "Não mapear":
                             base_peso = float(precos[coluna_ultima_faixa])
                             valor_kg_extra = float(precos[mapa['kg_extra']])
                             f_peso = base_peso + ((peso_nf - ultima_faixa_peso) * valor_kg_extra)
                         
                         # 2. Taxas sobre NF (Ad Valorem e Emex)
-                        def get_v(n): return float(precos[mapa['taxas'][n]]) if mapa['taxas'][n] != "Não mapear" else 0.0
+                        def get_v(n): return float(precos[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
                         
                         v_adv = max(valor_nf * (get_v("Ad Valorem %")/100), get_v("Ad Valorem Min"))
                         v_emex = max(valor_nf * (get_v("Emex %")/100), get_v("Emex Min"))
                         
-                        # 3. Taxas Fixas e Pedágio
+                        # 3. Taxas Fixas e Pedágio (Incluindo TRT, TDA, SEC-CAT no subtotal)
                         v_tas = get_v("TAS")
                         v_ctrc = get_v("CTRC")
+                        v_trt = get_v("TRT")
+                        v_tda = get_v("TDA")
+                        v_seccat = get_v("SEC-CAT")
                         v_pedagio = math.ceil(peso_nf / 100) * get_v("Pedagio")
                         
-                        # 4. GRIS (Sobre Frete Peso + Taxas)
-                        subtotal = f_peso + v_adv + v_tas + v_ctrc + v_pedagio
+                        # 4. GRIS (Sobre Frete Peso + Taxas Fixas + Pedágio + AdValorem)
+                        subtotal = f_peso + v_adv + v_tas + v_ctrc + v_pedagio + v_trt + v_tda + v_seccat
                         v_gris = max(subtotal * (get_v("Gris %")/100), get_v("Gris Min"))
                         
                         v_total = subtotal + v_gris + v_emex
@@ -200,4 +204,7 @@ elif menu == "💰 Comparativo":
                 conn = sqlite3.connect(DB_NAME)
                 conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
                              (datetime.now().strftime("%d/%m %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json(), json.dumps(res_json)))
-                conn.commit(); conn.close(); st.success("Cálculo Finalizado!"); st.dataframe(df_res)
+                conn.commit()
+                conn.close()
+                st.success("Cálculo Finalizado e Cotação Salva!")
+                st.dataframe(df_res)
