@@ -9,11 +9,11 @@ import math
 # 1. Configuração de Layout
 st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
 
-# CSS Mínimo apenas para o essencial, sem mexer em cores de texto para não dar transparência
+# CSS para garantir que o layout fique limpo e legível
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; }
-    [data-testid="stMetric"] { border: 1px solid #ddd; padding: 10px; border-radius: 8px; }
+    [data-testid="stMetric"] { border: 1px solid #ddd; padding: 10px; border-radius: 8px; background-color: rgba(255,255,255,0.05); }
     </style>
     """, unsafe_allow_html=True)
 
@@ -32,9 +32,9 @@ def init_db():
 
 init_db()
 
-# Estados
-if 'edit_id' not in st.session_state: st.session_state.edit_id = None
+# Estados de sessão para controle de visualização
 if 'view_details' not in st.session_state: st.session_state.view_details = {}
+if 'edit_id' not in st.session_state: st.session_state.edit_id = None
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -51,7 +51,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (CORREÇÃO DEFINITIVA) ---
+# --- DASHBOARD (ESTILO B.I. TOTALMENTE DINÂMICO) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -59,34 +59,43 @@ if menu == "📊 Dashboard":
     conn.close()
 
     if not df_h.empty:
-        # Criar base para os filtros
+        # Extração de dados para o BI
         resumos_all = []
         for _, row in df_h.iterrows():
             items = json.loads(row['estado_resumo'])
+            for item in items:
+                item['data_ref'] = row['data_hora'] # Para garantir unicidade se necessário
             resumos_all.extend(items)
+        
         df_base_bi = pd.DataFrame(resumos_all)
 
-        st.markdown("### 🔍 Filtros")
+        st.markdown("### 🔍 Filtros do Dashboard")
         f1, f2 = st.columns(2)
-        filtro_t = f1.multiselect("Transportadora", df_h['transportadora'].unique())
-        filtro_uf = f2.multiselect("Estado (UF)", sorted(df_base_bi['UF'].unique()))
+        filtro_t = f1.multiselect("Filtrar Transportadora", df_base_bi['Transportadora'].unique())
+        filtro_uf = f2.multiselect("Filtrar Estado (UF)", sorted(df_base_bi['UF'].unique()))
         
+        # Lógica de Filtro Dinâmico (Igual B.I.)
         df_final = df_base_bi.copy()
-        if filtro_t: df_final = df_final[df_final['Transportadora'].isin(filtro_t)]
-        if filtro_uf: df_final = df_final[df_final['UF'].isin(filtro_uf)]
+        if filtro_t:
+            df_final = df_final[df_final['Transportadora'].isin(filtro_t)]
+        if filtro_uf:
+            df_final = df_final[df_final['UF'].isin(filtro_uf)]
 
-        # MÉTRICAS SEM CSS QUE TRAVA VALOR
+        # Renderização das Métricas
         c1, c2, c3 = st.columns(3)
+        
+        # O valor de len(df_final) mudará instantaneamente conforme os filtros acima
         c1.metric("Total Cotado", f"R$ {df_final['Valor'].sum():,.2f}")
-        # Contagem baseada estritamente no que está na tela
         c2.metric("Notas Processadas", f"{len(df_final)}") 
         c3.metric("Ticket Médio", f"R$ {df_final['Valor'].mean():,.2f}" if len(df_final) > 0 else "R$ 0,00")
 
         if not df_final.empty:
-            st.subheader("📋 Resumo por Estado")
-            st.dataframe(df_final.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0), use_container_width=True)
+            st.subheader("📋 Consolidado por Estado")
+            # Tabela dinâmica que também responde aos filtros
+            pivot = df_final.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0)
+            st.dataframe(pivot, use_container_width=True)
     else:
-        st.info("Nenhuma cotação no histórico.")
+        st.info("Aguardando a primeira cotação para exibir dados.")
 
 # --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
@@ -95,6 +104,8 @@ elif menu == "🚛 Transportadoras":
     
     with st.expander("📝 Configurar Mapeamento", expanded=is_editing):
         edit_data = None
+        mapa_previo = {"faixas": [], "taxas": {}, "kg_extra": "Não mapear"}
+        
         if is_editing:
             conn = sqlite3.connect(DB_NAME)
             edit_data = pd.read_sql_query(f"SELECT * FROM transportadoras WHERE id={st.session_state.edit_id}", conn).iloc[0]
@@ -115,11 +126,11 @@ elif menu == "🚛 Transportadoras":
             st.markdown("---")
             st.subheader("⚖️ Faixas de Peso")
             
-            sel_kg = str(mapa_previo.get('kg_extra', "Não mapear")) if is_editing else "Não mapear"
+            sel_kg = str(mapa_previo.get('kg_extra', "Não mapear"))
             col_kg_extra = st.selectbox("Coluna do Kg Adicional", cols_t, index=cols_t.index(sel_kg) if sel_kg in cols_t else 0)
             
             n_f_val = len(mapa_previo.get('faixas', [])) if is_editing else 6
-            n_f = st.number_input("Quantidade de Faixas", 1, 50, n_f_val)
+            n_f = st.number_input("Quantidade de Faixas", 1, 50, n_f_val if n_f_val > 0 else 6)
             faixas = []
             for i in range(int(n_f)):
                 r = st.columns(3)
@@ -130,12 +141,12 @@ elif menu == "🚛 Transportadoras":
                     "col": r[2].selectbox(f"Coluna na Tabela", cols_t, index=cols_t.index(str(f_ini.get('col', "Não mapear"))) if str(f_ini.get('col', "Não mapear")) in cols_t else 0, key=f"co{i}")
                 })
             
-            st.subheader("💰 Taxas")
+            st.subheader("💰 Taxas Adicionais")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
             m_taxas = {}; t_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
                 with t_cols[idx % 3]:
-                    s_tx = str(mapa_previo.get('taxas', {}).get(tx, "Não mapear")) if is_editing else "Não mapear"
+                    s_tx = str(mapa_previo.get('taxas', {}).get(tx, "Não mapear"))
                     m_taxas[tx] = st.selectbox(tx, cols_t, index=cols_t.index(s_tx) if s_tx in cols_t else 0, key=f"tx_{tx}")
 
             if st.button("💾 Salvar Transportadora"):
@@ -221,11 +232,17 @@ elif menu == "💰 Comparativo":
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
             if st.button("🗑️ Excluir Lote", key=f"del_{row['id']}"):
                 conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); st.rerun()
+            st.divider()
             for idx, n_row in df_det.iterrows():
                 cn1, cn2, cn3 = st.columns([5, 2, 3])
                 cn1.write(f"📄 NF: {n_row.iloc[0]} - {n_row.iloc[2]}")
                 cn2.write(f"**R$ {n_row['VALOR_SISTEMA']:,.2f}**")
+                
+                # BOTÃO: Olho + Texto intuitivo
                 key_v = f"v_{row['id']}_{idx}"
-                if cn3.button("👁️", key=f"b_{key_v}"): st.session_state.view_details[key_v] = not st.session_state.view_details.get(key_v, False)
-                if st.session_state.view_details.get(key_v, False): st.info(n_row.get('MEMORIA_CALCULO', 'Sem dados'))
+                if cn3.button(f"👁️ Detalhar Cálculo", key=f"b_{key_v}"): 
+                    st.session_state.view_details[key_v] = not st.session_state.view_details.get(key_v, False)
+                
+                if st.session_state.view_details.get(key_v, False): 
+                    st.info(n_row.get('MEMORIA_CALCULO', 'Sem dados'))
     conn.close()
