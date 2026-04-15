@@ -14,11 +14,13 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #F8F9FA !important; border-right: 1px solid #E0E0E0; }
     [data-testid="stSidebar"] * { color: #000000 !important; font-weight: 600; }
     .stMetric { border: 1px solid #F0F0F0; padding: 10px; border-radius: 8px; background: #FFF; }
+    /* Estilo para as linhas de mapeamento ficarem separadas */
+    .mapping-row { border-bottom: 1px solid #eee; padding: 10px 0; }
     hr { margin: 10px 0; border-top: 1px solid #DDD; }
     </style>
     """, unsafe_allow_html=True)
 
-DB_NAME = 'comparativo_v13.db'
+DB_NAME = 'comparativo_v14.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -34,24 +36,24 @@ def init_db():
 
 init_db()
 
-# --- SIDEBAR: LOGO E MENU ---
+# --- SIDEBAR ---
 with st.sidebar:
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
-    if st.session_state.logo_data is None:
-        up = st.file_uploader("🖼️ Subir Logo", type=["png", "jpg"])
-        if up: 
-            st.session_state.logo_data = up.read()
-            st.rerun()
-    else:
+    if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
         if st.button("✏️ Editar Logo"):
             st.session_state.logo_data = None
+            st.rerun()
+    else:
+        up = st.file_uploader("🖼️ Subir Logo", type=["png", "jpg"])
+        if up: 
+            st.session_state.logo_data = up.read()
             st.rerun()
     
     st.divider()
     menu = st.radio("NAVEGAÇÃO", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- TELA: DASHBOARD (BI) ---
+# --- TELA: DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -64,27 +66,27 @@ if menu == "📊 Dashboard":
         df_full = pd.DataFrame(resumos)
 
         f1, f2 = st.columns(2)
-        with f1: t_sel = st.multiselect("Filtrar Transportadora", df_full['Transportadora'].unique())
-        with f2: uf_sel = st.multiselect("Filtrar Estado (UF)", sorted(df_full['UF'].unique()))
+        with f1: t_sel = st.multiselect("Transportadora", df_full['Transportadora'].unique())
+        with f2: uf_sel = st.multiselect("Estado (UF)", sorted(df_full['UF'].unique()))
 
         if t_sel: df_full = df_full[df_full['Transportadora'].isin(t_sel)]
         if uf_sel: df_full = df_full[df_full['UF'].isin(uf_sel)]
 
         st.divider()
         c1, c2, c3 = st.columns(3)
-        c1.metric("Valor Total Frete", f"R$ {df_full['Valor'].sum():,.2f}")
-        c2.metric("Total de Notas", int(df_h['qtd'].sum()))
-        c3.metric("Cotações Realizadas", len(df_h))
+        c1.metric("Total Cotado", f"R$ {df_full['Valor'].sum():,.2f}")
+        c2.metric("Notas Processadas", int(df_h['qtd'].sum()))
+        c3.metric("Ticket Médio", f"R$ {df_full['Valor'].mean():,.2f}" if not df_full.empty else "0")
 
-        st.subheader("📋 Custo Consolidado por UF")
+        st.subheader("📋 Consolidado por UF")
         pivot = df_full.pivot_table(index="UF", columns="Transportadora", values="Valor", aggfunc="sum").fillna(0)
         st.dataframe(pivot, use_container_width=True)
     else:
-        st.info("Nenhuma cotação disponível no momento.")
+        st.info("Nenhuma cotação realizada ainda.")
 
-# --- TELA: GESTÃO DE TRANSPORTADORAS (MAPEAMENTO COMPLETO) ---
+# --- TELA: TRANSPORTADORAS (MAPEAMENTO EM LISTA) ---
 elif menu == "🚛 Transportadoras":
-    st.title("🚛 Cadastro de Transportadoras")
+    st.title("🚛 Gestão de Transportadoras")
     
     if 'edit_id' not in st.session_state: st.session_state.edit_id = None
     edit_nome = ""
@@ -94,7 +96,7 @@ elif menu == "🚛 Transportadoras":
         conn.close()
         if res: edit_nome = res[0]
 
-    with st.expander("📝 Configurar Tabela e Mapeamento", expanded=(st.session_state.edit_id is not None)):
+    with st.expander("📝 Configurar Tabela, Cidades e Taxas", expanded=(st.session_state.edit_id is not None)):
         t_nome = st.text_input("Nome da Transportadora", value=edit_nome).upper()
         u1, u2 = st.columns(2)
         with u1: f_tab = st.file_uploader("Tabela de Frete (Excel)", type=["xlsx"])
@@ -102,31 +104,46 @@ elif menu == "🚛 Transportadoras":
         
         if f_tab:
             df_t = pd.read_excel(f_tab).fillna(0)
+            cols_tabela = ["Não mapear"] + list(df_t.columns)
             
-            # 1. Mapeamento de Faixas
-            st.markdown("### ⚖️ Faixas de Peso")
-            n_f = st.number_input("Quantidade de Faixas", 1, 30, 6)
+            # 1. MAPEAMENTO DE PESO EM LISTA
+            st.markdown("### ⚖️ Mapeamento de Faixas de Peso")
+            st.info("Defina as faixas de peso e selecione a coluna correspondente na sua planilha.")
+            
+            n_f = st.number_input("Quantidade de Faixas", 1, 50, 6)
             faixas = []
-            cols_f = st.columns(3)
+            
+            # Cabeçalho da Lista
+            h1, h2, h3 = st.columns([1, 1, 2])
+            h1.caption("Peso Min (kg)")
+            h2.caption("Peso Max (kg)")
+            h3.caption("Coluna na Planilha")
+
             for i in range(int(n_f)):
-                with cols_f[i % 3]:
+                with st.container():
                     r = st.columns([1, 1, 2])
-                    mi = r[0].number_input("Min", key=f"mi{i}")
-                    ma = r[1].number_input("Max", key=f"ma{i}")
-                    co = r[2].selectbox("Coluna", df_t.columns, key=f"co{i}")
+                    mi = r[0].number_input(f"Min", key=f"mi{i}", label_visibility="collapsed")
+                    ma = r[1].number_input(f"Max", key=f"ma{i}", label_visibility="collapsed")
+                    co = r[2].selectbox(f"Col", cols_tabela, key=f"co{i}", label_visibility="collapsed")
                     faixas.append({"min": mi, "max": ma, "col": co})
             
-            # 2. Mapeamento de Taxas
+            # 2. KG ADICIONAL (NOVO)
+            st.markdown("---")
+            st.markdown("### ➕ Kg Adicional")
+            col_kg_extra = st.selectbox("Selecione a coluna de valor por Kg Adicional (Excedente)", cols_tabela)
+            
+            # 3. MAPEAMENTO DE TAXAS
+            st.markdown("---")
             st.markdown("### 💰 Taxas Adicionais")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
             m_taxas = {}
-            t_cols = st.columns(4)
+            t_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
-                with t_cols[idx % 4]:
-                    m_taxas[tx] = st.selectbox(tx, ["Não mapear"] + list(df_t.columns), key=f"tx_{tx}")
+                with t_cols[idx % 3]:
+                    m_taxas[tx] = st.selectbox(tx, cols_tabela, key=f"tx_{tx}")
 
-            if st.button("💾 Salvar Configuração"):
-                mapa_final = {"faixas": faixas, "taxas": m_taxas}
+            if st.button("💾 Salvar Transportadora"):
+                mapa_final = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra}
                 conn = sqlite3.connect(DB_NAME)
                 if st.session_state.edit_id:
                     conn.execute("UPDATE transportadoras SET nome=?, tabela_json=?, mapeamento_json=? WHERE id=?",
@@ -136,7 +153,7 @@ elif menu == "🚛 Transportadoras":
                                  (t_nome, df_t.to_json(), pd.read_excel(f_cid).to_json(), json.dumps(mapa_final)))
                 conn.commit(); conn.close()
                 st.session_state.edit_id = None
-                st.success("Transportadora salva com sucesso!"); st.rerun()
+                st.success("Configuração salva!"); st.rerun()
 
     st.divider()
     conn = sqlite3.connect(DB_NAME)
@@ -150,28 +167,28 @@ elif menu == "🚛 Transportadoras":
         if c[2].button("🗑️", key=f"dl_{r['id']}"):
             conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM transportadoras WHERE id=?", (r['id'],)); conn.commit(); conn.close(); st.rerun()
 
-# --- TELA: COMPARATIVO (MOTOR DE CÁLCULO) ---
+# --- TELA: COMPARATIVO ---
 elif menu == "💰 Comparativo":
-    st.title("💰 Novo Comparativo")
+    st.title("💰 Comparativo de Fretes")
     f_base = st.file_uploader("📥 Subir Planilha Base (Notas)", type=["xlsx"])
     
     if f_base:
         df_b = pd.read_excel(f_base).fillna(0)
-        st.markdown("### 🔍 Mapeamento da Base")
+        st.markdown("### 🔍 Configuração das Colunas da Base")
         bc1, bc2, bc3, bc4 = st.columns(4)
-        with bc1: b_cid = st.selectbox("Cidade", df_b.columns, index=2)
-        with bc2: b_uf = st.selectbox("UF", df_b.columns, index=3)
-        with bc3: b_peso = st.selectbox("Peso", df_b.columns, index=6)
-        with bc4: b_val = st.selectbox("Valor NF", df_b.columns, index=7)
+        with bc1: b_cid = st.selectbox("Coluna Cidade", df_b.columns, index=2)
+        with bc2: b_uf = st.selectbox("Coluna UF", df_b.columns, index=3)
+        with bc3: b_peso = st.selectbox("Coluna Peso", df_b.columns, index=6)
+        with bc4: b_val = st.selectbox("Coluna Valor NF", df_b.columns, index=7)
 
         conn = sqlite3.connect(DB_NAME)
         ts = pd.read_sql_query("SELECT * FROM transportadoras", conn)
         conn.close()
 
         if not ts.empty:
-            t_alvo = st.selectbox("Selecione a Transportadora para Cotar", ts['nome'].tolist())
+            t_alvo = st.selectbox("Selecionar Transportadora", ts['nome'].tolist())
             
-            if st.button("🚀 Calcular Cotação"):
+            if st.button("🚀 Gerar Cotação Completa"):
                 t_row = ts[ts['nome'] == t_alvo].iloc[0]
                 df_tab = pd.read_json(io.StringIO(t_row['tabela_json']))
                 df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
@@ -181,41 +198,42 @@ elif menu == "💰 Comparativo":
                 resumo_uf = {}
 
                 for _, nf in df_b.iterrows():
-                    v_total_nota = 0.0
+                    v_total = 0.0
                     try:
                         cidade_nf = str(nf[b_cid]).upper().strip()
                         peso_nf = float(nf[b_peso])
                         valor_nf = float(nf[b_val])
                         
-                        # 1. Achar Sigla
+                        # Sigla -> Tabela
                         sigla = df_cid_ref[df_cid_ref.iloc[:,0].astype(str).str.upper() == cidade_nf].iloc[0, 2]
-                        # 2. Achar Linha na Tabela
                         precos = df_tab[df_tab.iloc[:,2] == sigla].iloc[0]
                         
-                        # 3. Frete Peso (Faixas)
-                        frete_peso = 0
+                        # Cálculo Frete Peso + Excedente
+                        f_peso_valor = 0
+                        ultima_faixa_max = 0
                         for f in mapa_t['faixas']:
-                            if peso_nf <= f['max']:
-                                frete_peso = float(precos[f['col']])
+                            ultima_faixa_max = f['max']
+                            if peso_nf <= f['max'] and f['col'] != "Não mapear":
+                                f_peso_valor = float(precos[f['col']])
                                 break
-                        if frete_peso == 0: # Caso exceda a última faixa
-                            frete_peso = float(precos[mapa_t['faixas'][-1]['col']])
                         
-                        # 4. Cálculo das Taxas Mapeadas
-                        taxas_calc = 0
-                        txs = mapa_t['taxas']
-                        if txs.get("Ad Valorem %") != "Não mapear":
-                            taxas_calc += valor_nf * float(precos[txs["Ad Valorem %"]])
-                        # (Outras taxas podem ser somadas aqui seguindo a mesma lógica)
+                        # Lógica de KG Extra
+                        if peso_nf > ultima_faixa_max and mapa_t.get("kg_extra") != "Não mapear":
+                            base_ultimo = float(precos[mapa_t['faixas'][-1]['col']])
+                            valor_kg_extra = float(precos[mapa_t['kg_extra']])
+                            f_peso_valor = base_ultimo + ((peso_nf - ultima_faixa_max) * valor_kg_extra)
+                        
+                        v_total = f_peso_valor
+                        # Soma taxas simples (Ad Valorem, etc)
+                        if mapa_t['taxas'].get("Ad Valorem %") != "Não mapear":
+                            v_total += valor_nf * (float(precos[mapa_t['taxas']["Ad Valorem %"]]) / 100)
 
-                        v_total_nota = frete_peso + taxas_calc
-                    except:
-                        v_total_nota = 0.0
+                    except: v_total = 0.0
                     
-                    nf['FRETE_CALCULADO'] = v_total_nota
+                    nf['FRETE_CALCULADO'] = v_total
                     res_final.append(nf.to_dict())
                     uf = nf[b_uf]
-                    resumo_uf[uf] = resumo_uf.get(uf, 0) + v_total_nota
+                    resumo_uf[uf] = resumo_uf.get(uf, 0) + v_total
 
                 df_resultado = pd.DataFrame(res_final)
                 resumo_json = [{"UF": k, "Transportadora": t_alvo, "Valor": v} for k, v in resumo_uf.items()]
@@ -224,19 +242,18 @@ elif menu == "💰 Comparativo":
                 conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json, estado_resumo) VALUES (?,?,?,?,?,?)",
                              (datetime.now().strftime("%d/%m - %H:%M"), t_alvo, df_resultado['FRETE_CALCULADO'].sum(), len(df_resultado), df_resultado.to_json(), json.dumps(resumo_json)))
                 conn.commit(); conn.close()
-                st.success("Processamento concluído!"); st.rerun()
+                st.success("Concluído!"); st.rerun()
 
     st.divider()
-    # Histórico
     conn = sqlite3.connect(DB_NAME)
     df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn)
     conn.close()
     for _, row in df_h.iterrows():
-        with st.expander(f"📋 {row['transportadora']} | {row['data_hora']} | R$ {row['total']:,.2f}"):
+        with st.expander(f"📦 {row['transportadora']} | {row['data_hora']} | R$ {row['total']:,.2f}"):
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
                 df_det.to_excel(writer, index=False)
-            st.download_button("📥 Baixar Excel Detalhado", out.getvalue(), f"frete_{row['id']}.xlsx")
-            if st.button("🗑️ Deletar", key=f"del_{row['id']}"):
+            st.download_button("📥 Baixar Planilha", out.getvalue(), f"cota_{row['id']}.xlsx")
+            if st.button("Deletar", key=f"d_{row['id']}"):
                 conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
