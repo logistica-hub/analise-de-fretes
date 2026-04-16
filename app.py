@@ -5,14 +5,20 @@ import json
 import io
 from datetime import datetime
 import math
-import requests  # Adicionado para comunicação com Sheets
+import requests
+import unicodedata # Necessário para remover acentos
 
-# 1. Configuração de Layout (Exatamente como você aprovou)
+# 1. Configuração de Layout
 st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
 
-# Configurações do Servidor Google Sheets (Conforme testes anteriores)
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw2stGRESs-l0dJQEd3bKAawtUb8_zRH1i3VIb4DALNSjdjZnked9Lxs97ProouwR0/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/1xKSw0CXynVDJfq1_CplAHtGT9zM4aYk_pxR4NLZu0-U/export?format=csv&gid=0"
+
+# FUNÇÃO NOVA: Normaliza o texto (remove acentos e espaços)
+def normalizar(txt):
+    if not txt or pd.isna(txt): return ""
+    txt = str(txt).upper().strip()
+    return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
 
 st.markdown("""
     <style>
@@ -41,7 +47,6 @@ if 'view_details' not in st.session_state:
 if 'edit_id' not in st.session_state:
     st.session_state.edit_id = None
 
-# --- SIDEBAR (Padrão Aprovado) ---
 with st.sidebar:
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
@@ -56,7 +61,6 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -78,7 +82,6 @@ if menu == "📊 Dashboard":
         c3.metric("Ticket Médio", f"R$ {df_bi['VALOR_SISTEMA'].mean():,.2f}" if len(df_bi) > 0 else "R$ 0,00")
         st.dataframe(df_bi.pivot_table(index="UF", columns="Transportadora_Ref", values="VALOR_SISTEMA", aggfunc="sum").fillna(0), use_container_width=True)
 
-# --- TRANSPORTADORAS (Com Mapping Flexível) ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     is_editing = st.session_state.edit_id is not None
@@ -104,10 +107,10 @@ elif menu == "🚛 Transportadoras":
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             cols_c = ["Não mapear"] + [str(c) for c in df_c.columns]
             
-            st.subheader("📍 Mapeamento de Colunas (Interpretação Dinâmica)")
+            st.subheader("📍 Mapeamento de Colunas")
             m1, m2 = st.columns(2)
             m_col_cid = m1.selectbox("Coluna da Cidade", cols_c, index=cols_c.index(str(mapa_previo.get('col_cid'))) if str(mapa_previo.get('col_cid')) in cols_c else 0)
-            m_col_sigla = m2.selectbox("Coluna da Sigla (Ex: Capital/Interior)", cols_c, index=cols_c.index(str(mapa_previo.get('col_sigla'))) if str(mapa_previo.get('col_sigla')) in cols_c else 0)
+            m_col_sigla = m2.selectbox("Coluna da Sigla", cols_c, index=cols_c.index(str(mapa_previo.get('col_sigla'))) if str(mapa_previo.get('col_sigla')) in cols_c else 0)
 
             st.subheader("⚖️ Pesos e Taxas")
             col_kg_extra = st.selectbox("Kg Adicional", cols_t, index=cols_t.index(str(mapa_previo.get('kg_extra'))) if str(mapa_previo.get('kg_extra')) in cols_t else 0)
@@ -126,15 +129,10 @@ elif menu == "🚛 Transportadoras":
 
             if st.button("💾 Salvar"):
                 mapa = {"faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_extra, "col_cid": m_col_cid, "col_sigla": m_col_sigla}
-                
-                # ENVIO PARA GOOGLE SHEETS
                 try:
                     payload = {"Nome": t_nome, "Mapeamento": f"Cidade:{m_col_cid} | Sigla:{m_col_sigla}"}
                     requests.post(SCRIPT_URL, data=json.dumps(payload))
-                except:
-                    pass # Evita travar se o Google falhar
-
-                # SALVAMENTO LOCAL
+                except: pass
                 conn = sqlite3.connect(DB_NAME)
                 if is_editing:
                     conn.execute("UPDATE transportadoras SET nome=?, tabela_json=?, cidades_json=?, mapeamento_json=? WHERE id=?", (t_nome, df_t.to_json(), df_c.to_json(), json.dumps(mapa), st.session_state.edit_id))
@@ -151,7 +149,6 @@ elif menu == "🚛 Transportadoras":
         if c3.button("🗑️", key=f"dl_{row['id']}"):
             conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM transportadoras WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
 
-# --- COMPARATIVO (Usa o Mapeamento Dinâmico) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Novo Cálculo")
     f_base = st.file_uploader("📥 Notas Fiscais", type=["xlsx"])
@@ -165,20 +162,24 @@ elif menu == "💰 Comparativo":
             df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
             mapa = json.loads(t_row['mapeamento_json'])
             
-            df_b['BUSCA_NF'] = df_b.iloc[:, 2].astype(str).str.upper().str.strip()
             c_cid = mapa.get('col_cid'); c_sig = mapa.get('col_sigla')
-            
             if c_cid == "Não mapear" or c_sig == "Não mapear":
-                st.error("Configure o mapeamento de colunas na aba Transportadoras."); st.stop()
+                st.error("Configure o mapeamento na aba Transportadoras."); st.stop()
 
-            df_cid_ref['BUSCA_REF'] = df_cid_ref[c_cid].astype(str).str.upper().str.strip()
+            # APLICAÇÃO DA NORMALIZAÇÃO PARA BUSCA
+            df_b['BUSCA_NF'] = df_b.iloc[:, 2].apply(normalizar)
+            df_cid_ref['BUSCA_REF'] = df_cid_ref[c_cid].apply(normalizar)
+            
             df_proc = pd.merge(df_b, df_cid_ref[['BUSCA_REF', c_sig]], left_on='BUSCA_NF', right_on='BUSCA_REF', how='left')
             
             res = []
             for _, nf in df_proc.iterrows():
                 try:
                     peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7]); sigla = str(nf[c_sig])
-                    linha_preco = df_tab[df_tab.iloc[:,0].astype(str).str.upper().str.strip() == sigla.upper().strip()].iloc[0]
+                    # Normaliza a busca da sigla na tabela de preços também
+                    df_tab['SIGLA_NORMAL'] = df_tab.iloc[:,0].apply(normalizar)
+                    sigla_norm = normalizar(sigla)
+                    linha_preco = df_tab[df_tab['SIGLA_NORMAL'] == sigla_norm].iloc[0]
                     
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
@@ -193,7 +194,7 @@ elif menu == "💰 Comparativo":
                     nf['VALOR_SISTEMA'] = total
                     nf['MEMORIA_CALCULO'] = f"Sigla: {sigla} | Frete Peso: {f_peso:.2f}"
                 except:
-                    nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro: Sigla ou Cidade não encontrada."
+                    nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro: Sigla não encontrada na tabela de preços."
                 res.append(nf.to_dict())
 
             df_res = pd.DataFrame(res)
