@@ -21,7 +21,7 @@ def normalizar(txt):
 
 def formata_br(valor):
     try:
-        if pd.isna(valor): return "0,00"
+        if pd.isna(valor) or valor == 0: return "0,00"
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "0,00"
@@ -223,21 +223,24 @@ elif menu == "💰 Comparativo":
                         tx_adval = max(valor_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
                         tx_gris = max(valor_nf * gv("Gris %"), gv("Gris Min"))
                         tx_pedagio = (math.ceil(peso_nf/100)*gv("Pedagio"))
-                        
-                        # Novas Taxas
+                        tx_tas = gv("TAS")
+                        tx_ctrc = gv("CTRC")
+                        tx_trt = gv("TRT")
+                        tx_tda = gv("TDA")
+                        tx_seccat = gv("SEC-CAT")
+                        tx_emex = max(valor_nf * gv("Emex %"), gv("Emex Min"))
                         tx_suframa = gv("Suframa (Fixo)")
                         tx_fluvial = valor_nf * gv("Fluvial %")
                         tx_red_fluvial = valor_nf * gv("Redespacho Fluvial %")
                         
-                        tx_fixas = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT") + tx_suframa
-                        
-                        total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_fixas + tx_fluvial + tx_red_fluvial
+                        total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_tas + tx_ctrc + tx_trt + tx_tda + tx_seccat + tx_emex + tx_suframa + tx_fluvial + tx_red_fluvial
                         
                         item = nf.to_dict()
                         item.update({
                             "VALOR_SISTEMA": round(total, 2), "T_NOME": t_nome, "F_PESO": f_peso, 
-                            "ADVAL": tx_adval, "GRIS": tx_gris, "PEDAGIO": tx_pedagio, "FIXAS": tx_fixas,
-                            "SUFRAMA": tx_suframa, "FLUVIAL": tx_fluvial, "RED_FLUVIAL": tx_red_fluvial
+                            "ADVAL": tx_adval, "GRIS": tx_gris, "PEDAGIO": tx_pedagio, "TAS": tx_tas,
+                            "CTRC": tx_ctrc, "TRT": tx_trt, "TDA": tx_tda, "SECCAT": tx_seccat,
+                            "EMEX": tx_emex, "SUFRAMA": tx_suframa, "FLUVIAL": tx_fluvial, "RED_FLUVIAL": tx_red_fluvial
                         })
                         res_transp.append(item)
                     except:
@@ -281,16 +284,29 @@ elif menu == "💰 Comparativo":
                             st.table(df_comp.assign(Valor=df_comp['Valor Total'].apply(formata_br))[['Transportadora', 'Valor']])
                         else:
                             n = dados_nota.iloc[0]
-                            c1, c2, c3 = st.columns(3)
-                            with c1:
-                                st.markdown(f"**Frete Peso:** R$ {formata_br(n.get('F_PESO',0))}")
-                                st.markdown(f"**AdVal/Gris:** R$ {formata_br(n.get('ADVAL',0)+n.get('GRIS',0))}")
-                            with c2:
-                                st.markdown(f"**Pedágio:** R$ {formata_br(n.get('PEDAGIO',0))}")
-                                st.markdown(f"**Fixas/Suframa:** R$ {formata_br(n.get('FIXAS',0))}")
-                            with c3:
-                                st.markdown(f"**Fluvial:** R$ {formata_br(n.get('FLUVIAL',0))}")
-                                st.markdown(f"**Red. Fluvial:** R$ {formata_br(n.get('RED_FLUVIAL',0))}")
+                            st.markdown(f"**Frete Peso:** R$ {formata_br(n.get('F_PESO',0))}")
+                            
+                            # LISTAGEM INDIVIDUALIZADA (SÓ MOSTRA SE > 0)
+                            taxas_lista = {
+                                "Ad Valorem": n.get('ADVAL',0),
+                                "Gris": n.get('GRIS',0),
+                                "Pedágio": n.get('PEDAGIO',0),
+                                "TAS": n.get('TAS',0),
+                                "CTRC": n.get('CTRC',0),
+                                "TRT": n.get('TRT',0),
+                                "TDA": n.get('TDA',0),
+                                "SEC-CAT": n.get('SECCAT',0),
+                                "Emex": n.get('EMEX',0),
+                                "Suframa": n.get('SUFRAMA',0),
+                                "Fluvial": n.get('FLUVIAL',0),
+                                "Red. Fluvial": n.get('RED_FLUVIAL',0)
+                            }
+                            
+                            for label, valor in taxas_lista.items():
+                                if valor > 0:
+                                    st.markdown(f"**{label}:** R$ {formata_br(valor)}")
+                            
+                            st.divider()
                             st.subheader(f"Total: R$ {formata_br(n['VALOR_SISTEMA'])}")
         except:
             if st.button(f"⚠️ Erro nos dados (ID {row['id']})", key=f"err_{row['id']}"):
