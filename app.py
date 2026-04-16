@@ -22,6 +22,7 @@ def normalizar(txt):
 def formata_br(valor):
     """Converte valores numéricos para o padrão brasileiro (1.234,56)"""
     try:
+        if pd.isna(valor): return "0,00"
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "0,00"
@@ -96,8 +97,8 @@ if menu == "📊 Dashboard":
         st.subheader("📍 Resumo por UF e Transportadora")
         if 'UF' in df_full.columns:
             pivot_uf = df_full.pivot_table(index='UF', columns='Transportadora_Ref', values='VALOR_SISTEMA', aggfunc='sum', fill_value=0)
-            # Formatar a tabela pivot para exibição BR
-            pivot_exibicao = pivot_uf.applymap(formata_br)
+            # CORREÇÃO AQUI: Substituído .applymap() por .map() para compatibilidade com Pandas novo
+            pivot_exibicao = pivot_uf.map(formata_br)
             st.dataframe(pivot_exibicao, use_container_width=True)
         else:
             st.warning("Coluna UF não encontrada nas notas.")
