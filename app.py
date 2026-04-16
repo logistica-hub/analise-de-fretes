@@ -23,6 +23,7 @@ st.markdown("""
     <style>
     .block-container { padding-top: 1rem; }
     [data-testid="stMetric"] { border: 1px solid #ddd; padding: 10px; border-radius: 8px; background-color: rgba(255,255,255,0.05); }
+    .tax-text { font-size: 14px; margin-bottom: 2px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -57,7 +58,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
 
-# --- DASHBOARD (ALTERADO PARA TABELA POR UF/TRANSPORTADORA) ---
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -65,7 +66,6 @@ if menu == "📊 Dashboard":
     conn.close()
     
     if not df_h.empty:
-        # Reconstruir base para filtros e tabela
         all_data = []
         for _, row in df_h.iterrows():
             temp_df = pd.read_json(io.StringIO(row['detalhes_json']))
@@ -73,7 +73,6 @@ if menu == "📊 Dashboard":
             all_data.append(temp_df)
         df_full = pd.concat(all_data, ignore_index=True)
 
-        # Filtros no topo
         st.subheader("🎯 Filtros")
         f1, f2 = st.columns(2)
         sel_t = f1.multiselect("Transportadora", options=df_full['Transportadora_Ref'].unique())
@@ -82,7 +81,6 @@ if menu == "📊 Dashboard":
         if sel_t: df_full = df_full[df_full['Transportadora_Ref'].isin(sel_t)]
         if sel_uf: df_full = df_full[df_full['UF'].isin(sel_uf)]
 
-        # Métricas
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {df_full['VALOR_SISTEMA'].sum():,.2f}")
         c2.metric("Notas Processadas", f"{len(df_full)}")
@@ -160,7 +158,7 @@ elif menu == "🚛 Transportadoras":
         if c3.button("🗑️", key=f"dl_{row['id']}"):
             conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM transportadoras WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
 
-# --- COMPARATIVO (OLHO NOTA A NOTA E TAXA A TAXA) ---
+# --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
     st.title("💰 Cálculo de Fretes")
     f_base = st.file_uploader("📥 Subir Planilha de Notas Fiscais", type=["xlsx"])
@@ -174,7 +172,6 @@ elif menu == "💰 Comparativo":
             df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
             mapa = json.loads(t_row['mapeamento_json'])
             
-            # Limpeza e Busca
             df_b['BUSCA_NF'] = df_b.iloc[:, 2].apply(normalizar)
             df_cid_ref['BUSCA_REF'] = df_cid_ref[mapa['col_cid']].apply(normalizar)
             df_proc = pd.merge(df_b, df_cid_ref[['BUSCA_REF', mapa['col_sigla']]], left_on='BUSCA_NF', right_on='BUSCA_REF', how='left')
@@ -186,7 +183,6 @@ elif menu == "💰 Comparativo":
                     peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7]); sigla = normalizar(str(nf[mapa['col_sigla']]))
                     linha_preco = df_tab[df_tab['SIGLA_CHAVE'] == sigla].iloc[0]
                     
-                    # Frete Peso
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
                         u_max, u_col = f['max'], f['col']
@@ -195,34 +191,30 @@ elif menu == "💰 Comparativo":
                     if not d and mapa.get('kg_extra') != "Não mapear":
                         f_peso = float(linha_preco[u_col]) + ((peso_nf - u_max) * float(linha_preco[mapa['kg_extra']]))
                     
-                    # Detalhamento de Taxas
                     def gv(n): return float(linha_preco[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
                     
                     tx_adval = max(valor_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
                     tx_gris = max(valor_nf * gv("Gris %"), gv("Gris Min"))
                     tx_pedagio = (math.ceil(peso_nf/100)*gv("Pedagio"))
-                    tx_outras = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
                     
-                    total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_outras
+                    # Detalhamento individual para o Teste 2
+                    tas = gv("TAS"); ctrc = gv("CTRC"); trt = gv("TRT"); tda = gv("TDA"); seccat = gv("SEC-CAT")
+                    tx_fixas_total = tas + ctrc + trt + tda + seccat
+                    
+                    total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_fixas_total
                     
                     nf_d = nf.to_dict()
                     nf_d.update({
-                        "VALOR_SISTEMA": round(total, 2),
-                        "F_PESO": round(f_peso, 2),
-                        "ADVALOREM": round(tx_adval, 2),
-                        "GRIS": round(tx_gris, 2),
-                        "PEDAGIO": round(tx_pedagio, 2),
-                        "TAXAS_FIXAS": round(tx_outras, 2)
+                        "VALOR_SISTEMA": round(total, 2), "F_PESO": round(f_peso, 2),
+                        "ADVALOREM": round(tx_adval, 2), "GRIS": round(tx_gris, 2),
+                        "PEDAGIO": round(tx_pedagio, 2), "TAS": tas, "CTRC": ctrc, 
+                        "TRT": trt, "TDA": tda, "SECCAT": seccat
                     })
                     res.append(nf_d)
                 except:
-                    nf_d = nf.to_dict()
-                    nf_d["VALOR_SISTEMA"] = 0.0
-                    res.append(nf_d)
+                    nf_d = nf.to_dict(); nf_d["VALOR_SISTEMA"] = 0.0; res.append(nf_d)
 
             df_res = pd.DataFrame(res)
-            
-            # Integração Google Sheets
             try:
                 payload = {"Nome": t_alvo, "Total": df_res['VALOR_SISTEMA'].sum(), "Qtd": len(df_res)}
                 requests.post(SCRIPT_URL, data=json.dumps(payload))
@@ -233,24 +225,29 @@ elif menu == "💰 Comparativo":
                          (datetime.now().strftime("%d/%m/%Y %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json()))
             conn.commit(); conn.close(); st.rerun()
 
-    # --- HISTÓRICO COM OLHO NOTA A NOTA ---
     st.divider()
-    st.subheader("🕒 Histórico e Detalhamento Taxa a Taxa")
+    st.subheader("🕒 Histórico de Cotações")
     conn = sqlite3.connect(DB_NAME); df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn); conn.close()
     
     for _, row in df_h.iterrows():
         with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {row['total']:,.2f}"):
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
-            st.dataframe(df_det[['NF', 'CIDADE', 'PESO', 'VALOR NF', 'VALOR_SISTEMA']], use_container_width=True)
             
-            st.write("---")
-            st.write("**🔍 Detalhamento por Nota (Clique no Olho):**")
+            st.write("**🔍 Detalhamento por Nota:**")
             for _, nota in df_det.iterrows():
-                with st.expander(f"👁️ Nota: {nota['NF']} - {nota['CIDADE']}"):
+                with st.expander(f"👁️ Nota: {nota['NF']} - {nota['CIDADE']} ({nota['UF']}) | R$ {nota['VALOR_SISTEMA']:,.2f}"):
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Frete Peso", f"R$ {nota.get('F_PESO', 0):,.2f}")
-                    c1.metric("Ad Valorem", f"R$ {nota.get('ADVALOREM', 0):,.2f}")
-                    c2.metric("Gris", f"R$ {nota.get('GRIS', 0):,.2f}")
-                    c2.metric("Pedágio", f"R$ {nota.get('PEDAGIO', 0):,.2f}")
-                    c3.metric("Taxas Fixas", f"R$ {nota.get('TAXAS_FIXAS', 0):,.2f}")
-                    c3.subheader(f"Total: R$ {nota['VALOR_SISTEMA']:,.2f}")
+                    with c1:
+                        st.markdown(f"**Frete Peso:** R$ {nota.get('F_PESO', 0):,.2f}")
+                        st.markdown(f"**Ad Valorem:** R$ {nota.get('ADVALOREM', 0):,.2f}")
+                        st.markdown(f"**Gris:** R$ {nota.get('GRIS', 0):,.2f}")
+                    with c2:
+                        st.markdown(f"**Pedágio:** R$ {nota.get('PEDAGIO', 0):,.2f}")
+                        st.markdown(f"**TAS:** R$ {nota.get('TAS', 0):,.2f}")
+                        st.markdown(f"**CTRC:** R$ {nota.get('CTRC', 0):,.2f}")
+                    with c3:
+                        st.markdown(f"**TRT:** R$ {nota.get('TRT', 0):,.2f}")
+                        st.markdown(f"**TDA:** R$ {nota.get('TDA', 0):,.2f}")
+                        st.markdown(f"**SEC-CAT:** R$ {nota.get('SECCAT', 0):,.2f}")
+                    st.divider()
+                    st.subheader(f"Total: R$ {nota['VALOR_SISTEMA']:,.2f}")
