@@ -286,7 +286,7 @@ elif menu == "💰 Comparativo":
                             n = dados_nota.iloc[0]
                             st.markdown(f"**Frete Peso:** R$ {formata_br(n.get('F_PESO',0))}")
                             
-                            # LISTAGEM INDIVIDUALIZADA (SÓ MOSTRA SE > 0)
+                            # LISTAGEM INDIVIDUALIZADA (CORRIGIDA COM TAS, CTRC E OUTRAS)
                             taxas_lista = {
                                 "Ad Valorem": n.get('ADVAL',0),
                                 "Gris": n.get('GRIS',0),
