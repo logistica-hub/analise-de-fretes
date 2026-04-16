@@ -19,6 +19,13 @@ def normalizar(txt):
     txt = str(txt).upper().strip()
     return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
 
+def formata_br(valor):
+    """Converte valores numéricos para o padrão brasileiro (1.234,56)"""
+    try:
+        return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return "0,00"
+
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; }
@@ -82,14 +89,16 @@ if menu == "📊 Dashboard":
         if sel_uf: df_full = df_full[df_full['UF'].isin(sel_uf)]
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Cotado", f"R$ {df_full['VALOR_SISTEMA'].sum():,.2f}")
+        c1.metric("Total Cotado", f"R$ {formata_br(df_full['VALOR_SISTEMA'].sum())}")
         c2.metric("Notas Processadas", f"{len(df_full)}")
-        c3.metric("Peso Total", f"{df_full['PESO'].sum():,.2f} kg")
+        c3.metric("Peso Total", f"{formata_br(df_full['PESO'].sum())} kg")
 
         st.subheader("📍 Resumo por UF e Transportadora")
         if 'UF' in df_full.columns:
             pivot_uf = df_full.pivot_table(index='UF', columns='Transportadora_Ref', values='VALOR_SISTEMA', aggfunc='sum', fill_value=0)
-            st.dataframe(pivot_uf, use_container_width=True)
+            # Formatar a tabela pivot para exibição BR
+            pivot_exibicao = pivot_uf.applymap(formata_br)
+            st.dataframe(pivot_exibicao, use_container_width=True)
         else:
             st.warning("Coluna UF não encontrada nas notas.")
     else:
@@ -197,7 +206,6 @@ elif menu == "💰 Comparativo":
                     tx_gris = max(valor_nf * gv("Gris %"), gv("Gris Min"))
                     tx_pedagio = (math.ceil(peso_nf/100)*gv("Pedagio"))
                     
-                    # Cálculo detalhado para o histórico
                     tas = gv("TAS"); ctrc = gv("CTRC"); trt = gv("TRT"); tda = gv("TDA"); seccat = gv("SEC-CAT")
                     tx_fixas_total = tas + ctrc + trt + tda + seccat
                     
@@ -230,7 +238,7 @@ elif menu == "💰 Comparativo":
     conn = sqlite3.connect(DB_NAME); df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn); conn.close()
     
     for _, row in df_h.iterrows():
-        with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {row['total']:,.2f}"):
+        with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {formata_br(row['total'])}"):
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
             
             c_del1, c_del2 = st.columns([8, 2])
@@ -241,19 +249,20 @@ elif menu == "💰 Comparativo":
 
             st.write("**🔍 Detalhamento por Nota:**")
             for _, nota in df_det.iterrows():
-                with st.expander(f"👁️ Nota: {nota['NF']} - {nota['CIDADE']} ({nota['UF']}) | R$ {nota['VALOR_SISTEMA']:,.2f}"):
+                val_nota = formata_br(nota['VALOR_SISTEMA'])
+                with st.expander(f"👁️ Nota: {nota['NF']} - {nota['CIDADE']} ({nota['UF']}) | R$ {val_nota}"):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        st.markdown(f"**Frete Peso:** R$ {nota.get('F_PESO', 0):,.2f}")
-                        st.markdown(f"**Ad Valorem:** R$ {nota.get('ADVALOREM', 0):,.2f}")
-                        st.markdown(f"**Gris:** R$ {nota.get('GRIS', 0):,.2f}")
+                        st.markdown(f"**Frete Peso:** R$ {formata_br(nota.get('F_PESO', 0))}")
+                        st.markdown(f"**Ad Valorem:** R$ {formata_br(nota.get('ADVALOREM', 0))}")
+                        st.markdown(f"**Gris:** R$ {formata_br(nota.get('GRIS', 0))}")
                     with c2:
-                        st.markdown(f"**Pedágio:** R$ {nota.get('PEDAGIO', 0):,.2f}")
-                        st.markdown(f"**TAS:** R$ {nota.get('TAS', 0):,.2f}")
-                        st.markdown(f"**CTRC:** R$ {nota.get('CTRC', 0):,.2f}")
+                        st.markdown(f"**Pedágio:** R$ {formata_br(nota.get('PEDAGIO', 0))}")
+                        st.markdown(f"**TAS:** R$ {formata_br(nota.get('TAS', 0))}")
+                        st.markdown(f"**CTRC:** R$ {formata_br(nota.get('CTRC', 0))}")
                     with c3:
-                        st.markdown(f"**TRT:** R$ {nota.get('TRT', 0):,.2f}")
-                        st.markdown(f"**TDA:** R$ {nota.get('TDA', 0):,.2f}")
-                        st.markdown(f"**SEC-CAT:** R$ {nota.get('SECCAT', 0):,.2f}")
+                        st.markdown(f"**TRT:** R$ {formata_br(nota.get('TRT', 0))}")
+                        st.markdown(f"**TDA:** R$ {formata_br(nota.get('TDA', 0))}")
+                        st.markdown(f"**SEC-CAT:** R$ {formata_br(nota.get('SECCAT', 0))}")
                     st.divider()
-                    st.subheader(f"Total: R$ {nota['VALOR_SISTEMA']:,.2f}")
+                    st.subheader(f"Total: R$ {val_nota}")
