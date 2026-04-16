@@ -58,32 +58,17 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
     
-    # --- SISTEMA DE PERSISTÊNCIA TOTAL (BACKUP/RESTORE) ---
     st.divider()
     st.subheader("💾 Gestão de Dados")
-    
-    # 1. Download do Backup
     try:
         if os.path.exists(DB_NAME):
             with open(DB_NAME, "rb") as f:
-                st.download_button(
-                    label="📥 Baixar Backup Atual",
-                    data=f,
-                    file_name=f"backup_fretes_{datetime.now().strftime('%d_%m_%H%M')}.db",
-                    mime="application/x-sqlite3",
-                    help="Salve este arquivo para não perder seus dados se o Streamlit resetar."
-                )
+                st.download_button("📥 Baixar Backup Atual", f, f"backup_fretes_{datetime.now().strftime('%d_%m_%H%M')}.db", "application/x-sqlite3")
     except: pass
-
-    # 2. Restauração do Backup
-    st.write("---")
     restore_file = st.file_uploader("📤 Restaurar Backup (.db)", type=["db"])
-    if restore_file is not None:
-        if st.button("✅ Confirmar Restauração"):
-            with open(DB_NAME, "wb") as f:
-                f.write(restore_file.getbuffer())
-            st.success("Dados restaurados! Reiniciando...")
-            st.rerun()
+    if restore_file and st.button("✅ Confirmar Restauração"):
+        with open(DB_NAME, "wb") as f: f.write(restore_file.getbuffer())
+        st.success("Dados restaurados!"); st.rerun()
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
@@ -100,26 +85,17 @@ if menu == "📊 Dashboard":
             all_data.append(temp_df)
         df_full = pd.concat(all_data, ignore_index=True)
 
-        st.subheader("🎯 Filtros")
-        f1, f2 = st.columns(2)
-        sel_t = f1.multiselect("Transportadora", options=df_full['Transportadora_Ref'].unique())
-        sel_uf = f2.multiselect("UF", options=df_full['UF'].unique() if 'UF' in df_full.columns else ["N/A"])
-
-        if sel_t: df_full = df_full[df_full['Transportadora_Ref'].isin(sel_t)]
-        if sel_uf: df_full = df_full[df_full['UF'].isin(sel_uf)]
-
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Cotado", f"R$ {formata_br(df_full['VALOR_SISTEMA'].sum())}")
         c2.metric("Notas Processadas", f"{len(df_full)}")
         c3.metric("Peso Total", f"{formata_br(df_full['PESO'].sum())} kg")
-
-        st.subheader("📍 Resumo por UF e Transportadora")
+        
+        st.subheader("📍 Resumo por UF")
         if 'UF' in df_full.columns:
             pivot_uf = df_full.pivot_table(index='UF', columns='Transportadora_Ref', values='VALOR_SISTEMA', aggfunc='sum', fill_value=0)
-            pivot_exibicao = pivot_uf.map(formata_br)
-            st.dataframe(pivot_exibicao, use_container_width=True)
+            st.dataframe(pivot_uf.map(formata_br), use_container_width=True)
     else:
-        st.info("Nenhuma cotação no histórico. Se você tinha dados, use a opção 'Restaurar Backup' na lateral.")
+        st.info("Nenhuma cotação no histórico.")
 
 # --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
@@ -186,93 +162,104 @@ elif menu == "🚛 Transportadoras":
 
 # --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
-    st.title("💰 Cálculo de Fretes")
-    f_base = st.file_uploader("📥 Subir Planilha de Notas Fiscais", type=["xlsx"])
-    conn = sqlite3.connect(DB_NAME); ts = pd.read_sql_query("SELECT * FROM transportadoras", conn); conn.close()
+    st.title("💰 Comparativo de Fretes")
+    f_base = st.file_uploader("📥 Subir Planilha de Notas Fiscais (Base)", type=["xlsx"])
     
-    if not ts.empty:
-        t_alvo = st.selectbox("Selecione a Transportadora", ts['nome'].tolist())
-        if f_base and st.button("🚀 Calcular Agora"):
-            df_b = pd.read_excel(f_base).fillna(0); t_row = ts[ts['nome'] == t_alvo].iloc[0]
-            df_tab = pd.read_json(io.StringIO(t_row['tabela_json']))
-            df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
-            mapa = json.loads(t_row['mapeamento_json'])
+    conn = sqlite3.connect(DB_NAME)
+    ts_db = pd.read_sql_query("SELECT * FROM transportadoras", conn)
+    conn.close()
+    
+    if not ts_db.empty:
+        opcoes = ts_db['nome'].tolist()
+        selecionadas = st.multiselect("Selecione as Transportadoras para comparar", options=opcoes, default=opcoes[:1])
+        
+        if f_base and selecionadas and st.button("🚀 Calcular Comparativo"):
+            df_b_original = pd.read_excel(f_base).fillna(0)
+            consolidado_historico = []
             
-            df_b['BUSCA_NF'] = df_b.iloc[:, 2].apply(normalizar)
-            df_cid_ref['BUSCA_REF'] = df_cid_ref[mapa['col_cid']].apply(normalizar)
-            df_proc = pd.merge(df_b, df_cid_ref[['BUSCA_REF', mapa['col_sigla']]], left_on='BUSCA_NF', right_on='BUSCA_REF', how='left')
-            df_tab['SIGLA_CHAVE'] = df_tab.iloc[:, 2].apply(normalizar)
+            for t_nome in selecionadas:
+                t_row = ts_db[ts_db['nome'] == t_nome].iloc[0]
+                df_tab = pd.read_json(io.StringIO(t_row['tabela_json']))
+                df_cid_ref = pd.read_json(io.StringIO(t_row['cidades_json']))
+                mapa = json.loads(t_row['mapeamento_json'])
+                
+                # Processamento
+                df_b = df_b_original.copy()
+                df_b['BUSCA_NF'] = df_b.iloc[:, 2].apply(normalizar)
+                df_cid_ref['BUSCA_REF'] = df_cid_ref[mapa['col_cid']].apply(normalizar)
+                df_proc = pd.merge(df_b, df_cid_ref[['BUSCA_REF', mapa['col_sigla']]], left_on='BUSCA_NF', right_on='BUSCA_REF', how='left')
+                df_tab['SIGLA_CHAVE'] = df_tab.iloc[:, 2].apply(normalizar)
 
-            res = []
-            for _, nf in df_proc.iterrows():
-                try:
-                    peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7]); sigla = normalizar(str(nf[mapa['col_sigla']]))
-                    linha_preco = df_tab[df_tab['SIGLA_CHAVE'] == sigla].iloc[0]
-                    f_peso = 0.0; u_max = 0; u_col = ""; d = False
-                    for f in mapa['faixas']:
-                        u_max, u_col = f['max'], f['col']
-                        if peso_nf <= f['max'] and f['col'] != "Não mapear":
-                            f_peso = float(linha_preco[f['col']]); d = True; break
-                    if not d and mapa.get('kg_extra') != "Não mapear":
-                        f_peso = float(linha_preco[u_col]) + ((peso_nf - u_max) * float(linha_preco[mapa['kg_extra']]))
-                    
-                    def gv(n): return float(linha_preco[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
-                    
-                    tx_adval = max(valor_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
-                    tx_gris = max(valor_nf * gv("Gris %"), gv("Gris Min"))
-                    tx_pedagio = (math.ceil(peso_nf/100)*gv("Pedagio"))
-                    
-                    tas = gv("TAS"); ctrc = gv("CTRC"); trt = gv("TRT"); tda = gv("TDA"); seccat = gv("SEC-CAT")
-                    tx_fixas_total = tas + ctrc + trt + tda + seccat
-                    
-                    total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_fixas_total
-                    nf_d = nf.to_dict()
-                    nf_d.update({
-                        "VALOR_SISTEMA": round(total, 2), "F_PESO": round(f_peso, 2),
-                        "ADVALOREM": round(tx_adval, 2), "GRIS": round(tx_gris, 2),
-                        "PEDAGIO": round(tx_pedagio, 2), "TAS": tas, "CTRC": ctrc, 
-                        "TRT": trt, "TDA": tda, "SECCAT": seccat
-                    })
-                    res.append(nf_d)
-                except:
-                    nf_d = nf.to_dict(); nf_d["VALOR_SISTEMA"] = 0.0; res.append(nf_d)
-
-            df_res = pd.DataFrame(res)
-            try:
-                payload = {"Nome": t_alvo, "Total": df_res['VALOR_SISTEMA'].sum(), "Qtd": len(df_res)}
-                requests.post(SCRIPT_URL, data=json.dumps(payload))
-            except: pass
-
+                res_transp = []
+                for _, nf in df_proc.iterrows():
+                    try:
+                        peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7]); sigla = normalizar(str(nf[mapa['col_sigla']]))
+                        linha_preco = df_tab[df_tab['SIGLA_CHAVE'] == sigla].iloc[0]
+                        f_peso = 0.0; u_max = 0; u_col = ""; d = False
+                        for f in mapa['faixas']:
+                            u_max, u_col = f['max'], f['col']
+                            if peso_nf <= f['max'] and f['col'] != "Não mapear":
+                                f_peso = float(linha_preco[f['col']]); d = True; break
+                        if not d and mapa.get('kg_extra') != "Não mapear":
+                            f_peso = float(linha_preco[u_col]) + ((peso_nf - u_max) * float(linha_preco[mapa['kg_extra']]))
+                        
+                        def gv(n): return float(linha_preco[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
+                        
+                        tx_adval = max(valor_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
+                        tx_gris = max(valor_nf * gv("Gris %"), gv("Gris Min"))
+                        tx_pedagio = (math.ceil(peso_nf/100)*gv("Pedagio"))
+                        tx_fixas = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
+                        
+                        total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_fixas
+                        
+                        item = nf.to_dict()
+                        item.update({"VALOR_SISTEMA": round(total, 2), "T_NOME": t_nome, "F_PESO": f_peso, "ADVAL": tx_adval, "GRIS": tx_gris, "PEDAGIO": tx_pedagio, "FIXAS": tx_fixas})
+                        res_transp.append(item)
+                    except:
+                        item = nf.to_dict(); item.update({"VALOR_SISTEMA": 0.0, "T_NOME": t_nome}); res_transp.append(item)
+                
+                consolidado_historico.extend(res_transp)
+            
+            # Salvar no Banco
+            df_final = pd.DataFrame(consolidado_historico)
+            nome_calc = "COMPARATIVO" if len(selecionadas) > 1 else selecionadas[0]
             conn = sqlite3.connect(DB_NAME)
             conn.execute("INSERT INTO cotacoes (data_hora, transportadora, total, qtd, detalhes_json) VALUES (?,?,?,?,?)",
-                         (datetime.now().strftime("%d/%m/%Y %H:%M"), t_alvo, df_res['VALOR_SISTEMA'].sum(), len(df_res), df_res.to_json()))
-            conn.commit(); conn.close(); st.rerun()
+                         (datetime.now().strftime("%d/%m/%Y %H:%M"), nome_calc, df_final['VALOR_SISTEMA'].sum(), len(df_b_original), df_final.to_json()))
+            conn.commit(); conn.close()
+            st.success(f"Cálculo concluído para {len(selecionadas)} transportadora(s)!"); st.rerun()
 
     st.divider()
-    st.subheader("🕒 Histórico de Cotações")
+    st.subheader("🕒 Histórico")
     conn = sqlite3.connect(DB_NAME); df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn); conn.close()
     
     for _, row in df_h.iterrows():
+        df_det = pd.read_json(io.StringIO(row['detalhes_json']))
+        transp_unicas = df_det['T_NOME'].unique()
+        is_multitransp = len(transp_unicas) > 1
+        
         with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {formata_br(row['total'])}"):
-            df_det = pd.read_json(io.StringIO(row['detalhes_json']))
-            if st.button("🗑️ Excluir Cotação", key=f"del_cot_{row['id']}"):
+            if st.button("🗑️ Excluir", key=f"del_{row['id']}"):
                 conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
-
-            for _, nota in df_det.iterrows():
-                val_nota = formata_br(nota['VALOR_SISTEMA'])
-                with st.expander(f"👁️ Nota: {nota['NF']} - {nota['CIDADE']} ({nota['UF']}) | R$ {val_nota}"):
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        st.markdown(f"**Frete Peso:** R$ {formata_br(nota.get('F_PESO', 0))}")
-                        st.markdown(f"**Ad Valorem:** R$ {formata_br(nota.get('ADVALOREM', 0))}")
-                        st.markdown(f"**Gris:** R$ {formata_br(nota.get('GRIS', 0))}")
-                    with c2:
-                        st.markdown(f"**Pedágio:** R$ {formata_br(nota.get('PEDAGIO', 0))}")
-                        st.markdown(f"**TAS:** R$ {formata_br(nota.get('TAS', 0))}")
-                        st.markdown(f"**CTRC:** R$ {formata_br(nota.get('CTRC', 0))}")
-                    with c3:
-                        st.markdown(f"**TRT:** R$ {formata_br(nota.get('TRT', 0))}")
-                        st.markdown(f"**TDA:** R$ {formata_br(nota.get('TDA', 0))}")
-                        st.markdown(f"**SEC-CAT:** R$ {formata_br(nota.get('SECCAT', 0))}")
-                    st.divider()
-                    st.subheader(f"Total: R$ {val_nota}")
+            
+            # Agrupar por Nota Fiscal para o detalhamento
+            notas_ids = df_det['NF'].unique()
+            for nf_id in notas_ids:
+                dados_nota = df_det[df_det['NF'] == nf_id]
+                cidade = dados_nota.iloc[0]['CIDADE']
+                
+                # Título do expander da nota
+                with st.expander(f"👁️ Nota: {nf_id} - {cidade}"):
+                    if is_multitransp:
+                        # VISÃO COMPARATIVA (VALORES POR TRANSP)
+                        st.write("**Ranking de Valores:**")
+                        df_comp = dados_nota[['T_NOME', 'VALOR_SISTEMA']].sort_values(by='VALOR_SISTEMA')
+                        df_comp.columns = ['Transportadora', 'Valor Total']
+                        st.table(df_comp.assign(Valor=df_comp['Valor Total'].apply(formata_br))[['Transportadora', 'Valor']])
+                    else:
+                        # VISÃO DETALHADA (TAXAS DA TRANSP ÚNICA)
+                        n = dados_nota.iloc[0]
+                        c1, c2 = st.columns(2)
+                        c1.markdown(f"**Frete Peso:** R$ {formata_br(n.get('F_PESO',0))}\n\n**AdVal/Gris:** R$ {formata_br(n.get('ADVAL',0)+n.get('GRIS',0))}")
+                        c2.markdown(f"**Pedágio:** R$ {formata_br(n.get('PEDAGIO',0))}\n\n**Taxas Fixas:** R$ {formata_br(n.get('FIXAS',0))}")
+                        st.subheader(f"Total: R$ {formata_br(n['VALOR_SISTEMA'])}")
