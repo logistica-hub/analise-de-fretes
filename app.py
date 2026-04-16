@@ -6,7 +6,7 @@ import io
 from datetime import datetime
 import math
 import requests
-import unicodedata # Necessário para remover acentos
+import unicodedata
 
 # 1. Configuração de Layout
 st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
@@ -14,7 +14,7 @@ st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw2stGRESs-l0dJQEd3bKAawtUb8_zRH1i3VIb4DALNSjdjZnked9Lxs97ProouwR0/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/1xKSw0CXynVDJfq1_CplAHtGT9zM4aYk_pxR4NLZu0-U/export?format=csv&gid=0"
 
-# FUNÇÃO NOVA: Normaliza o texto (remove acentos e espaços)
+# Função de Normalização (Remove acentos, espaços e padroniza)
 def normalizar(txt):
     if not txt or pd.isna(txt): return ""
     txt = str(txt).upper().strip()
@@ -166,20 +166,26 @@ elif menu == "💰 Comparativo":
             if c_cid == "Não mapear" or c_sig == "Não mapear":
                 st.error("Configure o mapeamento na aba Transportadoras."); st.stop()
 
-            # APLICAÇÃO DA NORMALIZAÇÃO PARA BUSCA
+            # 1. Normaliza as colunas de busca (Cidades)
             df_b['BUSCA_NF'] = df_b.iloc[:, 2].apply(normalizar)
             df_cid_ref['BUSCA_REF'] = df_cid_ref[c_cid].apply(normalizar)
             
+            # 2. Faz o cruzamento para achar a sigla
             df_proc = pd.merge(df_b, df_cid_ref[['BUSCA_REF', c_sig]], left_on='BUSCA_NF', right_on='BUSCA_REF', how='left')
             
+            # 3. Importante: Limpa e normaliza a coluna de siglas da TABELA DE PREÇOS
+            # Usamos .iloc[:, 2] para a sigla na tabela Jamef conforme o arquivo enviado
+            df_tab['SIGLA_CHAVE'] = df_tab.iloc[:, 2].apply(normalizar)
+
             res = []
             for _, nf in df_proc.iterrows():
                 try:
-                    peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7]); sigla = str(nf[c_sig])
-                    # Normaliza a busca da sigla na tabela de preços também
-                    df_tab['SIGLA_NORMAL'] = df_tab.iloc[:,0].apply(normalizar)
-                    sigla_norm = normalizar(sigla)
-                    linha_preco = df_tab[df_tab['SIGLA_NORMAL'] == sigla_norm].iloc[0]
+                    peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7])
+                    sigla_encontrada = str(nf[c_sig])
+                    sigla_norm = normalizar(sigla_encontrada)
+                    
+                    # Busca a linha do preço pela sigla normalizada
+                    linha_preco = df_tab[df_tab['SIGLA_CHAVE'] == sigla_norm].iloc[0]
                     
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
@@ -192,9 +198,9 @@ elif menu == "💰 Comparativo":
                     def gv(n): return float(linha_preco[mapa['taxas'][n]]) if n in mapa['taxas'] and mapa['taxas'][n] != "Não mapear" else 0.0
                     total = f_peso + max(valor_nf * gv("Ad Valorem %"), gv("Ad Valorem Min")) + max(valor_nf * gv("Gris %"), gv("Gris Min")) + (math.ceil(peso_nf/100)*gv("Pedagio")) + gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
                     nf['VALOR_SISTEMA'] = total
-                    nf['MEMORIA_CALCULO'] = f"Sigla: {sigla} | Frete Peso: {f_peso:.2f}"
-                except:
-                    nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro: Sigla não encontrada na tabela de preços."
+                    nf['MEMORIA_CALCULO'] = f"Sigla: {sigla_encontrada} | Frete Peso: {f_peso:.2f}"
+                except Exception as e:
+                    nf['VALOR_SISTEMA'] = 0.0; nf['MEMORIA_CALCULO'] = "Erro: Cidade ou Sigla não mapeada na Tabela de Preços."
                 res.append(nf.to_dict())
 
             df_res = pd.DataFrame(res)
