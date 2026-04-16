@@ -197,7 +197,7 @@ elif menu == "💰 Comparativo":
                     tx_gris = max(valor_nf * gv("Gris %"), gv("Gris Min"))
                     tx_pedagio = (math.ceil(peso_nf/100)*gv("Pedagio"))
                     
-                    # Detalhamento individual para o Teste 2
+                    # Cálculo detalhado para o histórico
                     tas = gv("TAS"); ctrc = gv("CTRC"); trt = gv("TRT"); tda = gv("TDA"); seccat = gv("SEC-CAT")
                     tx_fixas_total = tas + ctrc + trt + tda + seccat
                     
@@ -233,6 +233,12 @@ elif menu == "💰 Comparativo":
         with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {row['total']:,.2f}"):
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
             
+            c_del1, c_del2 = st.columns([8, 2])
+            if c_del2.button("🗑️ Excluir Cotação", key=f"del_cot_{row['id']}"):
+                conn = sqlite3.connect(DB_NAME)
+                conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],))
+                conn.commit(); conn.close(); st.rerun()
+
             st.write("**🔍 Detalhamento por Nota:**")
             for _, nota in df_det.iterrows():
                 with st.expander(f"👁️ Nota: {nota['NF']} - {nota['CIDADE']} ({nota['UF']}) | R$ {nota['VALOR_SISTEMA']:,.2f}"):
