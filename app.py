@@ -70,7 +70,7 @@ with st.sidebar:
         with open(DB_NAME, "wb") as f: f.write(restore_file.getbuffer())
         st.success("Dados restaurados!"); st.rerun()
 
-# --- DASHBOARD (RESTURADO COM FILTROS) ---
+# --- DASHBOARD (COM FILTROS) ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -80,31 +80,33 @@ if menu == "📊 Dashboard":
     if not df_h.empty:
         all_data = []
         for _, row in df_h.iterrows():
-            temp_df = pd.read_json(io.StringIO(row['detalhes_json']))
-            # Garante que a coluna de transportadora do histórico seja levada para o dashboard
-            if 'T_NOME' not in temp_df.columns:
-                temp_df['T_NOME'] = row['transportadora']
-            all_data.append(temp_df)
-        df_full = pd.concat(all_data, ignore_index=True)
-
-        # RESTAURAÇÃO DOS FILTROS APROVADOS
-        st.subheader("🎯 Filtros")
-        f1, f2 = st.columns(2)
-        sel_t = f1.multiselect("Transportadora", options=df_full['T_NOME'].unique())
-        sel_uf = f2.multiselect("UF", options=df_full['UF'].unique() if 'UF' in df_full.columns else ["N/A"])
-
-        if sel_t: df_full = df_full[df_full['T_NOME'].isin(sel_t)]
-        if sel_uf: df_full = df_full[df_full['UF'].isin(sel_uf)]
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Cotado", f"R$ {formata_br(df_full['VALOR_SISTEMA'].sum())}")
-        c2.metric("Notas Processadas", f"{len(df_full)}")
-        c3.metric("Peso Total", f"{formata_br(df_full['PESO'].sum())} kg")
+            try:
+                temp_df = pd.read_json(io.StringIO(row['detalhes_json']))
+                # Proteção contra dados antigos sem T_NOME
+                if 'T_NOME' not in temp_df.columns:
+                    temp_df['T_NOME'] = row['transportadora']
+                all_data.append(temp_df)
+            except: continue
         
-        st.subheader("📍 Resumo por UF e Transportadora")
-        if 'UF' in df_full.columns:
-            pivot_uf = df_full.pivot_table(index='UF', columns='T_NOME', values='VALOR_SISTEMA', aggfunc='sum', fill_value=0)
-            st.dataframe(pivot_uf.map(formata_br), use_container_width=True)
+        if all_data:
+            df_full = pd.concat(all_data, ignore_index=True)
+            st.subheader("🎯 Filtros")
+            f1, f2 = st.columns(2)
+            sel_t = f1.multiselect("Transportadora", options=df_full['T_NOME'].unique())
+            sel_uf = f2.multiselect("UF", options=df_full['UF'].unique() if 'UF' in df_full.columns else ["N/A"])
+
+            if sel_t: df_full = df_full[df_full['T_NOME'].isin(sel_t)]
+            if sel_uf: df_full = df_full[df_full['UF'].isin(sel_uf)]
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Cotado", f"R$ {formata_br(df_full['VALOR_SISTEMA'].sum())}")
+            c2.metric("Notas Processadas", f"{len(df_full)}")
+            c3.metric("Peso Total", f"{formata_br(df_full['PESO'].sum())} kg")
+            
+            st.subheader("📍 Resumo por UF e Transportadora")
+            if 'UF' in df_full.columns:
+                pivot_uf = df_full.pivot_table(index='UF', columns='T_NOME', values='VALOR_SISTEMA', aggfunc='sum', fill_value=0)
+                st.dataframe(pivot_uf.map(formata_br), use_container_width=True)
     else:
         st.info("Nenhuma cotação no histórico.")
 
@@ -171,7 +173,7 @@ elif menu == "🚛 Transportadoras":
         if c3.button("🗑️", key=f"dl_{row['id']}"):
             conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM transportadoras WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
 
-# --- COMPARATIVO (COM COTAÇÃO ÚNICA OU EM MASSA) ---
+# --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
     st.title("💰 Comparativo de Fretes")
     f_base = st.file_uploader("📥 Subir Planilha de Notas Fiscais (Base)", type=["xlsx"])
@@ -243,28 +245,37 @@ elif menu == "💰 Comparativo":
     conn = sqlite3.connect(DB_NAME); df_h = pd.read_sql_query("SELECT * FROM cotacoes ORDER BY id DESC", conn); conn.close()
     
     for _, row in df_h.iterrows():
-        df_det = pd.read_json(io.StringIO(row['detalhes_json']))
-        transp_unicas = df_det['T_NOME'].unique()
-        is_multitransp = len(transp_unicas) > 1
-        
-        with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {formata_br(row['total'])}"):
-            if st.button("🗑️ Excluir", key=f"del_{row['id']}"):
-                conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
-            
-            notas_ids = df_det['NF'].unique()
-            for nf_id in notas_ids:
-                dados_nota = df_det[df_det['NF'] == nf_id]
-                cidade = dados_nota.iloc[0]['CIDADE']
+        try:
+            df_det = pd.read_json(io.StringIO(row['detalhes_json']))
+            # CORREÇÃO KEYERROR: Se T_NOME não existir (cotação velha), cria com o nome da transportadora da linha
+            if 'T_NOME' not in df_det.columns:
+                df_det['T_NOME'] = row['transportadora']
                 
-                with st.expander(f"👁️ Nota: {nf_id} - {cidade}"):
-                    if is_multitransp:
-                        st.write("**Resumo por Transportadora:**")
-                        df_comp = dados_nota[['T_NOME', 'VALOR_SISTEMA']].sort_values(by='VALOR_SISTEMA')
-                        df_comp.columns = ['Transportadora', 'Valor Total']
-                        st.table(df_comp.assign(Valor=df_comp['Valor Total'].apply(formata_br))[['Transportadora', 'Valor']])
-                    else:
-                        n = dados_nota.iloc[0]
-                        c1, c2 = st.columns(2)
-                        c1.markdown(f"**Frete Peso:** R$ {formata_br(n.get('F_PESO',0))}\n\n**AdVal/Gris:** R$ {formata_br(n.get('ADVAL',0)+n.get('GRIS',0))}")
-                        c2.markdown(f"**Pedágio:** R$ {formata_br(n.get('PEDAGIO',0))}\n\n**Taxas Fixas:** R$ {formata_br(n.get('FIXAS',0))}")
-                        st.subheader(f"Total: R$ {formata_br(n['VALOR_SISTEMA'])}")
+            transp_unicas = df_det['T_NOME'].unique()
+            is_multitransp = len(transp_unicas) > 1
+            
+            with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {formata_br(row['total'])}"):
+                if st.button("🗑️ Excluir", key=f"del_{row['id']}"):
+                    conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
+                
+                notas_ids = df_det['NF'].unique()
+                for nf_id in notas_ids:
+                    dados_nota = df_det[df_det['NF'] == nf_id]
+                    cidade = dados_nota.iloc[0]['CIDADE']
+                    
+                    with st.expander(f"👁️ Nota: {nf_id} - {cidade}"):
+                        if is_multitransp:
+                            st.write("**Resumo por Transportadora:**")
+                            df_comp = dados_nota[['T_NOME', 'VALOR_SISTEMA']].sort_values(by='VALOR_SISTEMA')
+                            df_comp.columns = ['Transportadora', 'Valor Total']
+                            st.table(df_comp.assign(Valor=df_comp['Valor Total'].apply(formata_br))[['Transportadora', 'Valor']])
+                        else:
+                            n = dados_nota.iloc[0]
+                            c1, c2 = st.columns(2)
+                            c1.markdown(f"**Frete Peso:** R$ {formata_br(n.get('F_PESO',0))}\n\n**AdVal/Gris:** R$ {formata_br(n.get('ADVAL',0)+n.get('GRIS',0))}")
+                            c2.markdown(f"**Pedágio:** R$ {formata_br(n.get('PEDAGIO',0))}\n\n**Taxas Fixas:** R$ {formata_br(n.get('FIXAS',0))}")
+                            st.subheader(f"Total: R$ {formata_br(n['VALOR_SISTEMA'])}")
+        except:
+            # Se a cotação estiver muito corrompida, permite excluir para limpar o histórico
+            if st.button(f"⚠️ Erro nos dados (ID {row['id']}) - Clique para remover", key=f"err_{row['id']}"):
+                conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
