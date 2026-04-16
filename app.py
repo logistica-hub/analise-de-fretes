@@ -70,7 +70,7 @@ with st.sidebar:
         with open(DB_NAME, "wb") as f: f.write(restore_file.getbuffer())
         st.success("Dados restaurados!"); st.rerun()
 
-# --- DASHBOARD (COM FILTROS) ---
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Painel de Indicadores")
     conn = sqlite3.connect(DB_NAME)
@@ -82,9 +82,7 @@ if menu == "📊 Dashboard":
         for _, row in df_h.iterrows():
             try:
                 temp_df = pd.read_json(io.StringIO(row['detalhes_json']))
-                # Proteção contra dados antigos sem T_NOME
-                if 'T_NOME' not in temp_df.columns:
-                    temp_df['T_NOME'] = row['transportadora']
+                if 'T_NOME' not in temp_df.columns: temp_df['T_NOME'] = row['transportadora']
                 all_data.append(temp_df)
             except: continue
         
@@ -141,7 +139,7 @@ elif menu == "🚛 Transportadoras":
             m_col_cid = m1.selectbox("Coluna Cidade", cols_c, index=cols_c.index(str(mapa_previo.get('col_cid'))) if str(mapa_previo.get('col_cid')) in cols_c else 0)
             m_col_sigla = m2.selectbox("Coluna Sigla", cols_c, index=cols_c.index(str(mapa_previo.get('col_sigla'))) if str(mapa_previo.get('col_sigla')) in cols_c else 0)
 
-            st.subheader("⚖️ Regras")
+            st.subheader("⚖️ Regras de Peso")
             col_kg_extra = st.selectbox("Kg Adicional", cols_t, index=cols_t.index(str(mapa_previo.get('kg_extra'))) if str(mapa_previo.get('kg_extra')) in cols_t else 0)
             n_f = st.number_input("Qtd Faixas", 1, 50, len(mapa_previo['faixas']) if is_editing else 6)
             faixas = []
@@ -150,7 +148,12 @@ elif menu == "🚛 Transportadoras":
                 f_ini = mapa_previo['faixas'][i] if is_editing and i < len(mapa_previo['faixas']) else {}
                 faixas.append({"min": r[0].number_input(f"De", value=float(f_ini.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input(f"Até", value=float(f_ini.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox(f"Coluna", cols_t, index=cols_t.index(str(f_ini.get('col'))) if str(f_ini.get('col')) in cols_t else 0, key=f"co{i}")})
             
-            taxas_n = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", "SEC-CAT"]
+            st.subheader("💰 Taxas Adicionais")
+            taxas_n = [
+                "Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", 
+                "Gris %", "Gris Min", "Emex %", "Emex Min", "TRT", "TDA", 
+                "SEC-CAT", "Suframa (Fixo)", "Fluvial %", "Redespacho Fluvial %"
+            ]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_n):
                 s_tx = str(mapa_previo.get('taxas', {}).get(tx, "Não mapear"))
@@ -220,12 +223,22 @@ elif menu == "💰 Comparativo":
                         tx_adval = max(valor_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
                         tx_gris = max(valor_nf * gv("Gris %"), gv("Gris Min"))
                         tx_pedagio = (math.ceil(peso_nf/100)*gv("Pedagio"))
-                        tx_fixas = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT")
                         
-                        total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_fixas
+                        # Novas Taxas
+                        tx_suframa = gv("Suframa (Fixo)")
+                        tx_fluvial = valor_nf * gv("Fluvial %")
+                        tx_red_fluvial = valor_nf * gv("Redespacho Fluvial %")
+                        
+                        tx_fixas = gv("TAS") + gv("CTRC") + gv("TRT") + gv("TDA") + gv("SEC-CAT") + tx_suframa
+                        
+                        total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_fixas + tx_fluvial + tx_red_fluvial
                         
                         item = nf.to_dict()
-                        item.update({"VALOR_SISTEMA": round(total, 2), "T_NOME": t_nome, "F_PESO": f_peso, "ADVAL": tx_adval, "GRIS": tx_gris, "PEDAGIO": tx_pedagio, "FIXAS": tx_fixas})
+                        item.update({
+                            "VALOR_SISTEMA": round(total, 2), "T_NOME": t_nome, "F_PESO": f_peso, 
+                            "ADVAL": tx_adval, "GRIS": tx_gris, "PEDAGIO": tx_pedagio, "FIXAS": tx_fixas,
+                            "SUFRAMA": tx_suframa, "FLUVIAL": tx_fluvial, "RED_FLUVIAL": tx_red_fluvial
+                        })
                         res_transp.append(item)
                     except:
                         item = nf.to_dict(); item.update({"VALOR_SISTEMA": 0.0, "T_NOME": t_nome}); res_transp.append(item)
@@ -247,10 +260,7 @@ elif menu == "💰 Comparativo":
     for _, row in df_h.iterrows():
         try:
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
-            # CORREÇÃO KEYERROR: Se T_NOME não existir (cotação velha), cria com o nome da transportadora da linha
-            if 'T_NOME' not in df_det.columns:
-                df_det['T_NOME'] = row['transportadora']
-                
+            if 'T_NOME' not in df_det.columns: df_det['T_NOME'] = row['transportadora']
             transp_unicas = df_det['T_NOME'].unique()
             is_multitransp = len(transp_unicas) > 1
             
@@ -271,11 +281,17 @@ elif menu == "💰 Comparativo":
                             st.table(df_comp.assign(Valor=df_comp['Valor Total'].apply(formata_br))[['Transportadora', 'Valor']])
                         else:
                             n = dados_nota.iloc[0]
-                            c1, c2 = st.columns(2)
-                            c1.markdown(f"**Frete Peso:** R$ {formata_br(n.get('F_PESO',0))}\n\n**AdVal/Gris:** R$ {formata_br(n.get('ADVAL',0)+n.get('GRIS',0))}")
-                            c2.markdown(f"**Pedágio:** R$ {formata_br(n.get('PEDAGIO',0))}\n\n**Taxas Fixas:** R$ {formata_br(n.get('FIXAS',0))}")
+                            c1, c2, c3 = st.columns(3)
+                            with c1:
+                                st.markdown(f"**Frete Peso:** R$ {formata_br(n.get('F_PESO',0))}")
+                                st.markdown(f"**AdVal/Gris:** R$ {formata_br(n.get('ADVAL',0)+n.get('GRIS',0))}")
+                            with c2:
+                                st.markdown(f"**Pedágio:** R$ {formata_br(n.get('PEDAGIO',0))}")
+                                st.markdown(f"**Fixas/Suframa:** R$ {formata_br(n.get('FIXAS',0))}")
+                            with c3:
+                                st.markdown(f"**Fluvial:** R$ {formata_br(n.get('FLUVIAL',0))}")
+                                st.markdown(f"**Red. Fluvial:** R$ {formata_br(n.get('RED_FLUVIAL',0))}")
                             st.subheader(f"Total: R$ {formata_br(n['VALOR_SISTEMA'])}")
         except:
-            # Se a cotação estiver muito corrompida, permite excluir para limpar o histórico
-            if st.button(f"⚠️ Erro nos dados (ID {row['id']}) - Clique para remover", key=f"err_{row['id']}"):
+            if st.button(f"⚠️ Erro nos dados (ID {row['id']})", key=f"err_{row['id']}"):
                 conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
