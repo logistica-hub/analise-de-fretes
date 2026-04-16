@@ -1,68 +1,80 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import requests
 import json
 
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
-st.title("🚛 Configuração de Transportadoras")
 
-# Conecta à planilha
-conn = st.connection("gsheets", type=GSheetsConnection)
+# 1. SUA URL DO APPS SCRIPT (JÁ CONFIGURADA)
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw2stGRESs-l0dJQEd3bKAawtUb8_zRH1i3VIb4DALNSjdjZnked9Lxs97ProouwR0/exec"
 
-# --- 1. BUSCAR DADOS EXISTENTES ---
-try:
-    df_salvo = conn.read(worksheet="Transportadoras", ttl=0)
-except:
-    df_salvo = pd.DataFrame(columns=["Nome", "Mapeamento"])
+# 2. LINK DA SUA PLANILHA PARA LEITURA
+SHEET_CSV = "https://docs.google.com/spreadsheets/d/1xKSw0CXynVDJfq1_CplAHtGT9zM4aYk_pxR4NLZu0-U/export?format=csv&gid=0"
 
-# --- 2. ÁREA DE CONFIGURAÇÃO ---
-with st.expander("⚙️ Configurar Nova ou Editar Existente", expanded=True):
-    lista_nomes = ["NOVA TRANSPORTADORA"]
-    if not df_salvo.empty and "Nome" in df_salvo.columns:
-        lista_nomes += df_salvo["Nome"].dropna().tolist()
+st.title("🚛 Gerenciamento de Transportadoras")
+
+# Função para ler os dados existentes na planilha
+def carregar_dados():
+    try:
+        # Adicionamos um parâmetro de tempo para forçar o Streamlit a ler o dado mais novo do Google
+        url_com_cache = f"{SHEET_CSV}&refresh={pd.Timestamp.now().timestamp()}"
+        return pd.read_csv(url_com_cache).dropna(how="all")
+    except:
+        return pd.DataFrame(columns=["Nome", "Mapeamento"])
+
+# Carregar dados logo no início
+df_salvo = carregar_dados()
+
+# --- INTERFACE DE CADASTRO ---
+with st.expander("⚙️ Cadastrar Nova Transportadora", expanded=True):
+    t_nome = st.text_input("Nome da Transportadora (Ex: Braspress, Correios)").upper()
     
-    escolha = st.selectbox("Selecione a Transportadora", lista_nomes)
-    
-    t_nome = st.text_input("Nome da Transportadora", value="" if escolha == "NOVA TRANSPORTADORA" else escolha).upper()
-    
-    st.info("Suba as planilhas para mapear as colunas:")
-    c1, c2 = st.columns(2)
-    file_tabela = c1.file_uploader("Tabela de Preços (Excel)", type=["xlsx"])
-    file_cidades = c2.file_uploader("Planilha de Cidades/Regiões (Excel)", type=["xlsx"])
+    col1, col2 = st.columns(2)
+    file_tabela = col1.file_uploader("Upload: Tabela de Preços (Excel)", type=["xlsx"])
+    file_cidades = col2.file_uploader("Upload: Planilha de Cidades (Excel)", type=["xlsx"])
 
     if file_tabela and file_cidades:
-        df_t = pd.read_excel(file_tabela).fillna(0)
-        df_c = pd.read_excel(file_cidades).fillna(0)
-        
-        st.divider()
-        st.subheader("📍 Mapeamento de Colunas")
-        col1, col2 = st.columns(2)
-        
-        m_cidade = col1.selectbox("Coluna de CIDADE (na planilha de Cidades):", df_c.columns)
-        m_regiao = col2.selectbox("Coluna de REGIÃO/SIGLA (na planilha de Cidades):", df_c.columns)
-        
-        if st.button("💾 Salvar Configuração Completa"):
-            # Criamos a configuração em formato de texto simples
-            config_str = f"Cidade:{m_cidade} | Regiao:{m_regiao}"
+        try:
+            df_c = pd.read_excel(file_cidades)
             
-            nova_linha = pd.DataFrame([{"Nome": t_nome, "Mapeamento": config_str}])
+            st.info("Selecione quais colunas representam os dados abaixo:")
+            m1, m2 = st.columns(2)
+            col_cidade = m1.selectbox("Coluna que contém a CIDADE:", df_c.columns)
+            col_sigla = m2.selectbox("Coluna que contém a REGIÃO ou SIGLA:", df_c.columns)
             
-            # Remove duplicados se estiver editando
-            if not df_salvo.empty and escolha != "NOVA TRANSPORTADORA":
-                df_atualizado = df_salvo[df_salvo["Nome"] != escolha]
-            else:
-                df_atualizado = df_salvo
-                
-            df_final = pd.concat([df_atualizado, nova_linha], ignore_index=True)
-            
-            # Limpa valores nulos que podem dar erro no Google
-            df_final = df_final.dropna(subset=["Nome"])
-            
-            # Envia para o Google
-            conn.update(worksheet="Transportadoras", data=df_final)
-            st.success(f"✅ Configuração de {t_nome} salva!")
-            st.rerun()
+            if st.button("💾 SALVAR CONFIGURAÇÃO"):
+                if t_nome:
+                    # Monta o pacote de dados para enviar ao Google
+                    payload = {
+                        "Nome": t_nome,
+                        "Mapeamento": f"Cidade:{col_cidade} | Sigla:{col_sigla}"
+                    }
+                    
+                    # Envia para o Apps Script
+                    headers = {'Content-Type': 'application/json'}
+                    response = requests.post(SCRIPT_URL, data=json.dumps(payload), headers=headers)
+                    
+                    if response.status_code == 200:
+                        st.success(f"✅ Transportadora {t_nome} salva com sucesso na sua planilha!")
+                        # Limpa o cache e recarrega a página para mostrar o novo dado na tabela
+                        st.rerun()
+                    else:
+                        st.error(f"Erro ao salvar: {response.status_code}. Verifique a implantação.")
+                else:
+                    st.warning("Por favor, digite um nome para a transportadora.")
+        except Exception as e:
+            st.error(f"Erro ao ler os arquivos de Excel: {e}")
 
-# --- 3. VISUALIZAÇÃO ---
-st.subheader("Transportadoras no Banco de Dados")
-st.dataframe(df_salvo)
+# --- LISTA DE TRANSPORTADORAS CADASTRADAS ---
+st.divider()
+st.subheader("📋 Banco de Dados Atual (Google Sheets)")
+
+if not df_salvo.empty:
+    # Exibe a tabela formatada
+    st.dataframe(df_salvo, use_container_width=True)
+else:
+    st.info("Nenhuma transportadora cadastrada. A planilha parece estar vazia.")
+
+# Instrução de rodapé
+st.caption("Sistema conectado via Google Apps Script (Gratuito)")
