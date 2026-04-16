@@ -20,7 +20,6 @@ def normalizar(txt):
     return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
 
 def formata_br(valor):
-    """Converte valores numéricos para o padrão brasileiro (1.234,56)"""
     try:
         if pd.isna(valor): return "0,00"
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -31,7 +30,6 @@ st.markdown("""
     <style>
     .block-container { padding-top: 1rem; }
     [data-testid="stMetric"] { border: 1px solid #ddd; padding: 10px; border-radius: 8px; background-color: rgba(255,255,255,0.05); }
-    .tax-text { font-size: 14px; margin-bottom: 2px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -63,8 +61,23 @@ with st.sidebar:
     else:
         up = st.file_uploader("🖼️ Subir Logo", type=["png", "jpg"])
         if up: st.session_state.logo_data = up.read(); st.rerun()
+    
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
+    
+    # --- NOVA FUNÇÃO DE SEGURANÇA PARA STREAMLIT CLOUD ---
+    st.divider()
+    st.subheader("💾 Segurança de Dados")
+    try:
+        with open(DB_NAME, "rb") as f:
+            st.download_button(
+                label="📥 Baixar Backup (Banco de Dados)",
+                data=f,
+                file_name=f"backup_fretes_{datetime.now().strftime('%d_%m_%H%M')}.db",
+                mime="application/x-sqlite3"
+            )
+    except:
+        st.caption("Aguardando criação de dados...")
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
@@ -97,7 +110,6 @@ if menu == "📊 Dashboard":
         st.subheader("📍 Resumo por UF e Transportadora")
         if 'UF' in df_full.columns:
             pivot_uf = df_full.pivot_table(index='UF', columns='Transportadora_Ref', values='VALOR_SISTEMA', aggfunc='sum', fill_value=0)
-            # CORREÇÃO AQUI: Substituído .applymap() por .map() para compatibilidade com Pandas novo
             pivot_exibicao = pivot_uf.map(formata_br)
             st.dataframe(pivot_exibicao, use_container_width=True)
         else:
@@ -192,7 +204,6 @@ elif menu == "💰 Comparativo":
                 try:
                     peso_nf = float(nf.iloc[6]); valor_nf = float(nf.iloc[7]); sigla = normalizar(str(nf[mapa['col_sigla']]))
                     linha_preco = df_tab[df_tab['SIGLA_CHAVE'] == sigla].iloc[0]
-                    
                     f_peso = 0.0; u_max = 0; u_col = ""; d = False
                     for f in mapa['faixas']:
                         u_max, u_col = f['max'], f['col']
@@ -211,7 +222,6 @@ elif menu == "💰 Comparativo":
                     tx_fixas_total = tas + ctrc + trt + tda + seccat
                     
                     total = f_peso + tx_adval + tx_gris + tx_pedagio + tx_fixas_total
-                    
                     nf_d = nf.to_dict()
                     nf_d.update({
                         "VALOR_SISTEMA": round(total, 2), "F_PESO": round(f_peso, 2),
@@ -241,14 +251,10 @@ elif menu == "💰 Comparativo":
     for _, row in df_h.iterrows():
         with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {formata_br(row['total'])}"):
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
-            
             c_del1, c_del2 = st.columns([8, 2])
             if c_del2.button("🗑️ Excluir Cotação", key=f"del_cot_{row['id']}"):
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],))
-                conn.commit(); conn.close(); st.rerun()
+                conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
 
-            st.write("**🔍 Detalhamento por Nota:**")
             for _, nota in df_det.iterrows():
                 val_nota = formata_br(nota['VALOR_SISTEMA'])
                 with st.expander(f"👁️ Nota: {nota['NF']} - {nota['CIDADE']} ({nota['UF']}) | R$ {val_nota}"):
