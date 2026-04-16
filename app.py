@@ -3,6 +3,7 @@ import pandas as pd
 import sqlite3
 import json
 import io
+import os
 from datetime import datetime
 import math
 import requests
@@ -11,7 +12,6 @@ import unicodedata
 # 1. Configuração de Layout
 st.set_page_config(page_title="Editora Ave-Maria | Fretes", layout="wide")
 
-# URL do Apps Script para integração Google Sheets
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw2stGRESs-l0dJQEd3bKAawtUb8_zRH1i3VIb4DALNSjdjZnked9Lxs97ProouwR0/exec"
 
 def normalizar(txt):
@@ -25,13 +25,6 @@ def formata_br(valor):
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "0,00"
-
-st.markdown("""
-    <style>
-    .block-container { padding-top: 1rem; }
-    [data-testid="stMetric"] { border: 1px solid #ddd; padding: 10px; border-radius: 8px; background-color: rgba(255,255,255,0.05); }
-    </style>
-    """, unsafe_allow_html=True)
 
 DB_NAME = 'comparativo_v19.db'
 
@@ -65,19 +58,32 @@ with st.sidebar:
     st.divider()
     menu = st.radio("MENU PRINCIPAL", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
     
-    # --- NOVA FUNÇÃO DE SEGURANÇA PARA STREAMLIT CLOUD ---
+    # --- SISTEMA DE PERSISTÊNCIA TOTAL (BACKUP/RESTORE) ---
     st.divider()
-    st.subheader("💾 Segurança de Dados")
+    st.subheader("💾 Gestão de Dados")
+    
+    # 1. Download do Backup
     try:
-        with open(DB_NAME, "rb") as f:
-            st.download_button(
-                label="📥 Baixar Backup (Banco de Dados)",
-                data=f,
-                file_name=f"backup_fretes_{datetime.now().strftime('%d_%m_%H%M')}.db",
-                mime="application/x-sqlite3"
-            )
-    except:
-        st.caption("Aguardando criação de dados...")
+        if os.path.exists(DB_NAME):
+            with open(DB_NAME, "rb") as f:
+                st.download_button(
+                    label="📥 Baixar Backup Atual",
+                    data=f,
+                    file_name=f"backup_fretes_{datetime.now().strftime('%d_%m_%H%M')}.db",
+                    mime="application/x-sqlite3",
+                    help="Salve este arquivo para não perder seus dados se o Streamlit resetar."
+                )
+    except: pass
+
+    # 2. Restauração do Backup
+    st.write("---")
+    restore_file = st.file_uploader("📤 Restaurar Backup (.db)", type=["db"])
+    if restore_file is not None:
+        if st.button("✅ Confirmar Restauração"):
+            with open(DB_NAME, "wb") as f:
+                f.write(restore_file.getbuffer())
+            st.success("Dados restaurados! Reiniciando...")
+            st.rerun()
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
@@ -112,10 +118,8 @@ if menu == "📊 Dashboard":
             pivot_uf = df_full.pivot_table(index='UF', columns='Transportadora_Ref', values='VALOR_SISTEMA', aggfunc='sum', fill_value=0)
             pivot_exibicao = pivot_uf.map(formata_br)
             st.dataframe(pivot_exibicao, use_container_width=True)
-        else:
-            st.warning("Coluna UF não encontrada nas notas.")
     else:
-        st.info("Nenhuma cotação no histórico.")
+        st.info("Nenhuma cotação no histórico. Se você tinha dados, use a opção 'Restaurar Backup' na lateral.")
 
 # --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
@@ -143,7 +147,7 @@ elif menu == "🚛 Transportadoras":
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             cols_c = ["Não mapear"] + [str(c) for c in df_c.columns]
             
-            st.subheader("📍 Mapeamento (Cidades)")
+            st.subheader("📍 Mapeamento")
             m1, m2 = st.columns(2)
             m_col_cid = m1.selectbox("Coluna Cidade", cols_c, index=cols_c.index(str(mapa_previo.get('col_cid'))) if str(mapa_previo.get('col_cid')) in cols_c else 0)
             m_col_sigla = m2.selectbox("Coluna Sigla", cols_c, index=cols_c.index(str(mapa_previo.get('col_sigla'))) if str(mapa_previo.get('col_sigla')) in cols_c else 0)
@@ -251,8 +255,7 @@ elif menu == "💰 Comparativo":
     for _, row in df_h.iterrows():
         with st.expander(f"📅 {row['data_hora']} | {row['transportadora']} | Total: R$ {formata_br(row['total'])}"):
             df_det = pd.read_json(io.StringIO(row['detalhes_json']))
-            c_del1, c_del2 = st.columns([8, 2])
-            if c_del2.button("🗑️ Excluir Cotação", key=f"del_cot_{row['id']}"):
+            if st.button("🗑️ Excluir Cotação", key=f"del_cot_{row['id']}"):
                 conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cotacoes WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
 
             for _, nota in df_det.iterrows():
