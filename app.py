@@ -145,7 +145,7 @@ if menu == "📊 Dashboard":
                     st.dataframe(df_uf.style.apply(highlight_min, axis=1).format(format_brl), use_container_width=True, height=500)
     else: st.info("Sem histórico de cotações para exibir.")
 
-# --- ABA DE BASE COMERCIAL (PARA SALVAR O ARQUIVO GRANDE) ---
+# --- ABA DE BASE COMERCIAL ---
 elif menu == "📂 Base Comercial":
     st.title("📂 Gestão da Base Comercial")
     up_base = st.file_uploader("Subir Base de Notas (Excel)", type=["xlsx"])
@@ -226,16 +226,12 @@ elif menu == "💰 Comparativo":
         if selecionadas and st.button("🚀 Calcular"):
             with st.spinner("Processando..."):
                 df_final = df_base.copy()
-                
-                # CORREÇÃO: Localização das colunas pelo nome para evitar valores zerados
                 col_cid_nome = next((c for c in df_base.columns if 'CIDADE' in c.upper()), df_base.columns[2])
                 col_peso_nome = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
                 col_valor_nome = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
-                
                 cid_notas = df_base[col_cid_nome].astype(str).apply(super_limpeza).values
                 pesos_notas = pd.to_numeric(df_base[col_peso_nome], errors='coerce').fillna(0).values
                 valores_notas = pd.to_numeric(df_base[col_valor_nome], errors='coerce').fillna(0).values
-                
                 for t_nome in selecionadas:
                     t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
                     m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
@@ -244,9 +240,7 @@ elif menu == "💰 Comparativo":
                     siglas_match = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
                     df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza)
                     df_tab_idx = df_tab.set_index('sig_clean')
-                    
                     def get_v(col): return df_tab_idx[col].reindex(siglas_match).fillna(0).values if col and col != "Não mapear" and col in df_tab_idx.columns else np.zeros(len(df_base))
-                    
                     f_peso = np.zeros(len(df_base)); v_kg_adic = np.zeros(len(df_base))
                     for faixa in m['faixas']:
                         v_f = get_v(faixa['col']); mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0); f_peso[mask] = v_f[mask]
@@ -255,23 +249,16 @@ elif menu == "💰 Comparativo":
                         v_b = get_v(m['faixas'][-1]['col']); v_ex = get_v(m['kg_extra'])
                         v_kg_adic[mask_e] = (pesos_notas[mask_e] - u_max) * v_ex[mask_e]
                         f_peso[mask_e] = v_b[mask_e] + v_kg_adic[mask_e]
-                        
                     adv = np.maximum(valores_notas * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
                     grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
                     emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
                     ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
-                    
-                    df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
-                    df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
-                    df_final[f'ADVAL_{t_nome}'] = adv
-                    df_final[f'GRIS_{t_nome}'] = grs
-                    df_final[f'EMEX_{t_nome}'] = emx
-                    df_final[f'PEDAGIO_{t_nome}'] = ped
-                    df_final[f'TAS_{t_nome}'] = get_v(m['taxas'].get("TAS"))
+                    df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic; df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
+                    df_final[f'ADVAL_{t_nome}'] = adv; df_final[f'GRIS_{t_nome}'] = grs; df_final[f'EMEX_{t_nome}'] = emx
+                    df_final[f'PEDAGIO_{t_nome}'] = ped; df_final[f'TAS_{t_nome}'] = get_v(m['taxas'].get("TAS"))
                     df_final[f'CTRC_{t_nome}'] = get_v(m['taxas'].get("CTRC"))
                     df_final[f'OUTROS_{t_nome}'] = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + df_final[f'OUTROS_{t_nome}']
-                
                 try:
                     data_sao_paulo = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M")
                     supabase.table("cotacoes").insert({"data_hora": data_sao_paulo, "qtd": len(df_base), "detalhes_json": df_final.fillna(0).to_dict(orient='records')}).execute()
@@ -279,10 +266,24 @@ elif menu == "💰 Comparativo":
                 except Exception: st.error("Erro ao salvar histórico.")
     else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
 
-    # HISTÓRICO ORIGINAL 17.5
+    # HISTÓRICO ORIGINAL 17.5 CORRIGIDO
     st.divider(); res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     if res_h.data:
-        for t_ref, g in pd.DataFrame(res_h.data).groupby("data_hora", sort=False):
+        df_hist_raw = pd.DataFrame(res_h.data)
+        for t_ref, g in df_hist_raw.groupby("data_hora", sort=False):
             det = []
-            for d in g['detalhes_json']: det.extend(d) if isinstance(d, list) else det.append(d)
-            df_det = pd.DataFrame(
+            for d in g['detalhes_json']:
+                if isinstance(d, list): det.extend(d)
+                else: det.append(d)
+            df_det = pd.DataFrame(det)
+            with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
+                cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
+                c_btn1, c_btn2 = st.columns(2)
+                c_btn1.download_button(f"📥 Baixar Relatório Multi-Abas", data=to_excel(df_det), file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
+                if c_btn2.button("🗑️ Remover Registro", key=f"del_{t_ref}"):
+                    for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
+                    st.rerun()
+                resumo = df_det[cols_totais].sum().reset_index()
+                resumo.columns = ['Transportadora', 'Frete Total']
+                resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
+                st.table(resumo.style.format({'Frete Total': format_brl}))
