@@ -69,7 +69,7 @@ if menu == "📊 Dashboard":
     else:
         st.info("Nenhum histórico encontrado.")
 
-# --- TRANSPORTADORAS ---
+# --- TRANSPORTADORAS (ATUALIZADO COM NOVAS TAXAS) ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     res_t = supabase.table("transportadoras").select("*").execute()
@@ -88,7 +88,8 @@ elif menu == "🚛 Transportadoras":
 
         if df_t is not None and df_a is not None:
             mapa = e_row['mapeamento_json'] if e_row is not None else {}
-            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]; cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
+            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
+            cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
             
             l1, l2 = st.columns(2)
             m_ap_cid = l1.selectbox("Abrangência: Cidade", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
@@ -107,7 +108,11 @@ elif menu == "🚛 Transportadoras":
                     "col": r[2].selectbox("Coluna", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"col{i}")
                 })
 
-            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "SEC-CAT", "Suframa", "EMEX", "TRT", "TDA"]
+            taxas_nomes = [
+                "Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", 
+                "Gris %", "Gris Min", "SEC-CAT", "Suframa", "EMEX", "TRT", "TDA",
+                "Fluvial %", "Redespacho Fluvial %"
+            ]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
                 v_tx = mapa.get('taxas', {}).get(tx, "Não mapear")
@@ -125,7 +130,7 @@ elif menu == "🚛 Transportadoras":
         if c[1].button("✏️", key=f"ed{r['id']}"): st.session_state.edit_id = r['id']; st.rerun()
         if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- COMPARATIVO ---
+# --- COMPARATIVO (CÁLCULO ATUALIZADO) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Comparativo por Nota Fiscal")
     f_notas = st.file_uploader("Subir Notas Fiscais (Excel)", type=["xlsx"])
@@ -135,12 +140,11 @@ elif menu == "💰 Comparativo":
     if f_notas and not df_ts.empty:
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
-            with st.spinner("Vetorizando 18k linhas..."):
+            with st.spinner("Calculando com novas regras de taxas..."):
                 df_base = pd.read_excel(f_notas).fillna(0).reset_index(drop=True)
                 df_final = pd.DataFrame(index=df_base.index)
                 df_final['UF'] = "ND"
                 
-                # Normalização das chaves das Notas
                 chaves_notas = df_base.iloc[:, 2].astype(str).apply(normalizar)
                 pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values
                 valores_notas = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0).values
@@ -151,18 +155,12 @@ elif menu == "💰 Comparativo":
                     df_tab = pd.DataFrame(t_r['tabela_json'])
                     df_abr = pd.DataFrame(t_r['cidades_json'])
                     
-                    # Criar Dicionários de De/Para (Mais rápido que Merge e evita duplicação)
                     dic_abr = df_abr.set_index(df_abr[m['ap_cidade']].astype(str).apply(normalizar))[m['ap_sigla']].to_dict()
                     siglas_match = chaves_notas.map(dic_abr).astype(str).apply(normalizar)
                     
-                    # Cálculo Frete Peso e Taxas
                     f_peso = np.zeros(len(df_base))
-                    adval, gris, pedagio, outras = np.zeros(len(df_base)), np.zeros(len(df_base)), np.zeros(len(df_base)), np.zeros(len(df_base))
-                    
-                    # Prepara a tabela de preços indexada pela sigla
                     df_tab_idx = df_tab.set_index(df_tab[m['tab_sigla']].astype(str).apply(normalizar))
                     
-                    # Itera sobre faixas e taxas (Isso é rápido porque acessamos o index da tabela)
                     for f in m['faixas']:
                         if f['col'] in df_tab_idx.columns:
                             precos_col = siglas_match.map(df_tab_idx[f['col']]).fillna(0).values
@@ -182,12 +180,21 @@ elif menu == "💰 Comparativo":
                             return siglas_match.map(df_tab_idx[col]).fillna(0).values
                         return np.zeros(len(df_base))
 
+                    # Lógica de Taxas
                     adval = np.maximum(valores_notas * get_taxa_values("Ad Valorem %"), get_taxa_values("Ad Valorem Min"))
                     gris = np.maximum(valores_notas * get_taxa_values("Gris %"), get_taxa_values("Gris Min"))
                     pedagio = np.ceil(pesos_notas/100) * get_taxa_values("Pedagio")
-                    outras = get_taxa_values("TAS") + get_taxa_values("CTRC") + get_taxa_values("SEC-CAT") + get_taxa_values("Suframa") + get_taxa_values("EMEX") + get_taxa_values("TRT") + get_taxa_values("TDA")
                     
-                    df_final[f'TOTAL_{t_nome}'] = f_peso + adval + gris + pedagio + outras
+                    # Taxas de Valor Fixo
+                    fixas = (get_taxa_values("TAS") + get_taxa_values("CTRC") + 
+                             get_taxa_values("SEC-CAT") + get_taxa_values("Suframa") + 
+                             get_taxa_values("EMEX") + get_taxa_values("TRT") + get_taxa_values("TDA"))
+                    
+                    # Taxas de Percentual sobre a Nota (Novas)
+                    fluviais = (valores_notas * get_taxa_values("Fluvial %")) + \
+                               (valores_notas * get_taxa_values("Redespacho Fluvial %"))
+                    
+                    df_final[f'TOTAL_{t_nome}'] = f_peso + adval + gris + pedagio + fixas + fluviais
                     if m['tab_uf'] in df_tab_idx.columns:
                         df_final['UF'] = siglas_match.map(df_tab_idx[m['tab_uf']]).fillna("ND").values
 
@@ -195,14 +202,13 @@ elif menu == "💰 Comparativo":
                 lista_detalhes = df_save.to_dict(orient='records')
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
                 
-                # Envio em blocos para o Supabase
                 chunk_size = 5000
                 total_geral = float(df_save.filter(like='TOTAL_').sum().sum())
                 for i in range(0, len(lista_detalhes), chunk_size):
                     payload = {"data_hora": data_hora, "total": total_geral, "qtd": len(df_base), "detalhes_json": lista_detalhes[i : i + chunk_size]}
                     supabase.table("cotacoes").insert(payload).execute()
                 
-                st.success("Cálculo Finalizado!"); st.rerun()
+                st.success("Cálculo Finalizado com as novas taxas!"); st.rerun()
 
     st.divider()
     st.subheader("🕒 Histórico")
