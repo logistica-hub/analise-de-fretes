@@ -45,11 +45,11 @@ with st.sidebar:
             st.rerun()
 
     st.divider()
-    menu = st.radio("MENUPrincipal", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
+    menu = st.radio("Navegação", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
     st.divider()
     st.caption("Conectado ao Supabase Cloud ✅")
 
-# --- DASHBOARD (CONSOLIDADO UF E FILTROS) ---
+# --- DASHBOARD (PONTOS 4 E 5) ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     res = supabase.table("cotacoes").select("*").execute()
@@ -59,7 +59,6 @@ if menu == "📊 Dashboard":
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
             
-            # Filtros
             st.subheader("🎯 Filtros")
             f1, f2 = st.columns(2)
             lista_ufs = sorted([str(x) for x in df_total['UF'].dropna().unique() if x != ""])
@@ -71,19 +70,18 @@ if menu == "📊 Dashboard":
             if sel_uf: df_total = df_total[df_total['UF'].isin(sel_uf)]
             if sel_tr: df_total = df_total[df_total['T_NOME'].isin(sel_tr)]
             
-            # Métricas e Consolidação por UF
             c1, c2 = st.columns(2)
             c1.metric("Total Cotado", f"R$ {formata_br(df_total['VALOR_SISTEMA'].sum())}")
             c2.metric("Qtd Notas", len(df_total))
             
-            st.write("### 🌍 Consolidação por UF e Transportadora")
+            st.write("### 🌍 Consolidação UF e Valor")
             if 'UF' in df_total.columns:
                 cons = df_total.groupby(['UF', 'T_NOME'])['VALOR_SISTEMA'].sum().reset_index()
                 st.dataframe(cons.sort_values('VALOR_SISTEMA', ascending=False), use_container_width=True)
     else:
-        st.info("Nenhum dado encontrado.")
+        st.info("Nenhum histórico encontrado.")
 
-# --- TRANSPORTADORAS (MAPEAMENTO COMPLETO) ---
+# --- TRANSPORTADORAS (PONTO 2) ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     res_t = supabase.table("transportadoras").select("*").execute()
@@ -106,14 +104,12 @@ elif menu == "🚛 Transportadoras":
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
             
-            st.subheader("🔗 Ligações Chave")
             l1, l2 = st.columns(2)
             m_ap_cid = l1.selectbox("Abrangência: Cidade", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
-            m_ap_sig = l1.selectbox("Abrangência: Sigla (Match)", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
+            m_ap_sig = l1.selectbox("Abrangência: Sigla", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
             m_tb_sig = l2.selectbox("Tabela: Sigla (Match)", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
             m_tb_uf = l2.selectbox("Tabela: UF", cols_t, index=cols_t.index(mapa.get('tab_uf')) if mapa.get('tab_uf') in cols_t else 0)
             
-            st.subheader("⚖️ Pesos e Faixas")
             col_kg_ex = st.selectbox("Preço Kg Adicional", cols_t, index=cols_t.index(mapa.get('kg_extra')) if mapa.get('kg_extra') in cols_t else 0)
             n_faixas = st.number_input("Qtd Faixas", 1, 50, len(mapa.get('faixas', [])) or 6)
             faixas = []
@@ -126,7 +122,6 @@ elif menu == "🚛 Transportadoras":
                     "col": r[2].selectbox("Coluna", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"col{i}")
                 })
 
-            st.subheader("💰 Todas as Taxas")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "SEC-CAT", "Suframa", "EMEX", "TRT", "TDA"]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
@@ -135,27 +130,28 @@ elif menu == "🚛 Transportadoras":
 
             if st.button("💾 Salvar Transportadora"):
                 mapa_final = {"ap_cidade": m_ap_cid, "ap_sigla": m_ap_sig, "tab_sigla": m_tb_sig, "tab_uf": m_tb_uf, "faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_ex}
-                payload = {"nome": nome_t, "tabela_json": df_t.replace([np.inf, -np.inf], 0).fillna(0).to_dict(orient='records'), "cidades_json": df_a.to_dict(orient='records'), "mapeamento_json": mapa_final}
+                p_tabela = df_t.replace([np.inf, -np.inf], 0).fillna(0).to_dict(orient='records')
+                payload = {"nome": nome_t, "tabela_json": p_tabela, "cidades_json": df_a.to_dict(orient='records'), "mapeamento_json": mapa_final}
                 if e_id: supabase.table("transportadoras").update(payload).eq("id", e_id).execute()
                 else: supabase.table("transportadoras").insert(payload).execute()
-                st.session_state.edit_id = None; st.success("Salvo!"); st.rerun()
+                st.session_state.edit_id = None; st.rerun()
 
     for _, r in df_list.iterrows():
         c = st.columns([7, 1, 1]); c[0].write(f"**{r['nome']}**")
         if c[1].button("✏️", key=f"ed{r['id']}"): st.session_state.edit_id = r['id']; st.rerun()
         if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- COMPARATIVO (EXPANSÃO INTELIGENTE) ---
+# --- COMPARATIVO (PONTO 3 - REGRAS DE EXPANSÃO) ---
 elif menu == "💰 Comparativo":
-    st.title("💰 Comparativo Massivo")
-    f_notas = st.file_uploader("Subir Notas Fiscais", type=["xlsx"])
+    st.title("💰 Comparativo Massivo (Vetorizado)")
+    f_notas = st.file_uploader("Subir Notas Fiscais (Excel)", type=["xlsx"])
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
 
     if f_notas and not df_ts.empty:
-        selecionadas = st.multiselect("Transportadoras", df_ts['nome'].tolist())
+        selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
-            with st.spinner("Vetorizando 18k linhas..."):
+            with st.spinner("Processando 18k linhas..."):
                 df_base = pd.read_excel(f_notas).fillna(0)
                 resultados_lote = []
                 for t_nome in selecionadas:
@@ -167,7 +163,7 @@ elif menu == "💰 Comparativo":
                     df_abr['K_REF'] = df_abr[m['ap_cidade']].astype(str).apply(normalizar)
                     df_tab['K_TAB'] = df_tab[m['tab_sigla']].astype(str).apply(normalizar)
                     
-                    df_m = pd.merge(df_c, df_abr[[m['ap_sigla'], 'K_REF']], left_on='K_CID', right_on='KEY_REF' if 'KEY_REF' in df_abr else 'K_REF', how='left')
+                    df_m = pd.merge(df_c, df_abr[[m['ap_sigla'], 'K_REF']], left_on='K_CID', right_on='K_REF', how='left')
                     df_m['K_MATCH'] = df_m[m['ap_sigla']].astype(str).apply(normalizar)
                     df_f = pd.merge(df_m, df_tab, left_on='K_MATCH', right_on='K_TAB', how='left')
                     
@@ -180,8 +176,8 @@ elif menu == "💰 Comparativo":
                     
                     if m.get('kg_extra') in df_f.columns:
                         u_max, u_col = m['faixas'][-1]['max'], m['faixas'][-1]['col']
-                        mask_e = (p_kg > u_max)
-                        df_f.loc[mask_e, 'F_PESO'] = pd.to_numeric(df_f.loc[mask_e, u_col], errors='coerce').fillna(0) + ((p_kg[mask_e]-u_max)*pd.to_numeric(df_f.loc[mask_e, m['kg_extra']], errors='coerce').fillna(0))
+                        m_e = (p_kg > u_max)
+                        df_f.loc[m_e, 'F_PESO'] = pd.to_numeric(df_f.loc[m_e, u_col], errors='coerce').fillna(0) + ((p_kg[m_e]-u_max)*pd.to_numeric(df_f.loc[m_e, m['kg_extra']], errors='coerce').fillna(0))
 
                     def gv(n):
                         c = m['taxas'].get(n, "Não mapear")
@@ -192,13 +188,22 @@ elif menu == "💰 Comparativo":
                     df_f['PEDAGIO'] = np.ceil(p_kg/100)*gv("Pedagio")
                     df_f['OUTRAS'] = gv("TAS")+gv("CTRC")+gv("SEC-CAT")+gv("Suframa")+gv("EMEX")+gv("TRT")+gv("TDA")
                     df_f['VALOR_SISTEMA'] = df_f['F_PESO']+df_f['ADVAL']+df_f['GRIS']+df_f['PEDAGIO']+df_f['OUTRAS']
-                    df_f['T_NOME'], df_f['UF'] = t_nome, df_f[m['tab_uf']] if m['tab_uf'] in df_f.columns else "ND"
-                    resultados_lote.append(df_f)
+                    
+                    # OTIMIZAÇÃO: Apenas colunas essenciais para o banco
+                    df_slim = pd.DataFrame({
+                        'T_NOME': t_nome, 'UF': df_f[m['tab_uf']] if m['tab_uf'] in df_f.columns else "ND",
+                        'VALOR_SISTEMA': df_f['VALOR_SISTEMA'], 'F_PESO': df_f['F_PESO'],
+                        'ADVAL': df_f['ADVAL'], 'GRIS': df_f['GRIS'], 'PEDAGIO': df_f['PEDAGIO'], 'OUTRAS': df_f['OUTRAS']
+                    })
+                    resultados_lote.append(df_slim)
 
                 df_full = pd.concat(resultados_lote).replace([np.inf, -np.inf], 0).fillna(0)
                 payload = {"data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"), "total": float(df_full['VALOR_SISTEMA'].sum()), "qtd": len(df_base), "detalhes_json": df_full.to_dict(orient='records')}
-                supabase.table("cotacoes").insert(payload).execute()
-                st.rerun()
+                try:
+                    supabase.table("cotacoes").insert(payload).execute()
+                    st.rerun()
+                except:
+                    st.error("Payload muito grande. Tente menos transportadoras ou colunas.")
 
     st.divider()
     st.subheader("🕒 Histórico")
@@ -206,19 +211,14 @@ elif menu == "💰 Comparativo":
     for r in res_h.data:
         with st.expander(f"📦 {r['data_hora']} | {r['qtd']} notas | R$ {formata_br(r['total'])}"):
             df_h = pd.DataFrame(r['detalhes_json'])
-            
-            # REGRA: 1 Transportadora = Detalhado | Várias = Consolidado
-            unificadas = df_h['T_NOME'].unique()
-            if len(unificadas) == 1:
-                st.info(f"Detalhamento de Taxas: {unificadas[0]}")
-                cols_det = ['UF', 'VALOR_SISTEMA', 'F_PESO', 'ADVAL', 'GRIS', 'PEDAGIO', 'OUTRAS']
-                st.dataframe(df_h[[c for c in cols_det if c in df_h.columns]], use_container_width=True)
+            trs = df_h['T_NOME'].unique()
+            if len(trs) == 1:
+                st.write(f"**Detalhamento Taxas: {trs[0]}**")
+                st.dataframe(df_h[['UF', 'VALOR_SISTEMA', 'F_PESO', 'ADVAL', 'GRIS', 'PEDAGIO', 'OUTRAS']], use_container_width=True)
             else:
-                st.info("Resumo por Transportadora")
+                st.write("**Consolidado Comparativo**")
                 resumo = df_h.groupby('T_NOME')['VALOR_SISTEMA'].sum().reset_index()
                 resumo['VALOR_SISTEMA'] = resumo['VALOR_SISTEMA'].apply(lambda x: f"R$ {formata_br(x)}")
                 st.table(resumo)
-                if st.button("Ver Todas as Notas", key=f"view_{r['id']}"): st.dataframe(df_h)
-            
-            if st.button("🗑️ Excluir", key=f"del_{r['id']}"):
+            if st.button("🗑️", key=f"del_{r['id']}"):
                 supabase.table("cotacoes").delete().eq("id", r['id']).execute(); st.rerun()
