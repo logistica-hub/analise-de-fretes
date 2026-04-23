@@ -1,8 +1,5 @@
-dash
-dash-bootstrap-components
+streamlit
 pandas
-openpyxl
-xlsxwriter
-gunicorn
-st-gsheets-connection
 supabase
+openpyxl
+numpy
