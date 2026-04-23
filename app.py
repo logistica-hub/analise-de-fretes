@@ -27,7 +27,7 @@ def super_limpeza(txt):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave-Maria Fretes")
-    st.info("Versão de Teste: 15.0")
+    st.info("Versão de Teste: 15.1")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -53,24 +53,25 @@ if menu == "📊 Dashboard":
             df_total = pd.concat(all_dfs, ignore_index=True)
             st.subheader("🎯 Filtros")
             c_f1, c_f2 = st.columns(2)
-            ufs = sorted(df_total['UF'].unique().tolist()) if 'UF' in df_total.columns else []
-            sel_ufs = c_f1.multiselect("Filtrar por UF", ufs, default=ufs)
+            
+            # Ajuste no filtro para usar NF ao invés de UF se necessário, 
+            # mas mantemos o Dashboard focado em indicadores gerais.
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
             sel_tr = c_f2.multiselect("Transportadoras", nomes_t, default=nomes_t)
+            
             df_filt = df_total.copy()
-            if sel_ufs: df_filt = df_filt[df_filt['UF'].isin(sel_ufs)]
             cols_sel = [f"TOTAL_{t}" for t in sel_tr]
+            
             if not df_filt.empty and cols_sel:
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Notas Processadas", len(df_filt))
                 m2.metric("Gasto Total", f"R$ {df_filt[cols_sel].sum().sum():,.2f}")
                 m3.metric("Melhor Opção", df_filt[cols_sel].sum().idxmin().replace("TOTAL_", ""))
+                
                 st.divider()
-                st.subheader("🌍 Gastos por UF")
-                resumo_uf = df_filt.groupby('UF')[cols_sel].sum()
-                st.bar_chart(resumo_uf)
-                st.dataframe(resumo_uf.style.format("R$ {:,.2f}"), use_container_width=True)
+                st.subheader("📋 Resumo por Nota (NF)")
+                st.dataframe(df_filt, use_container_width=True)
     else: st.info("Sem dados no histórico.")
 
 # --- CADASTRO ---
@@ -154,7 +155,10 @@ elif menu == "💰 Comparativo":
                 df_base = pd.read_excel(f_notas).fillna(0)
                 df_final = pd.DataFrame(index=df_base.index)
                 
-                # Cidades da Base de Notas
+                # Pegando o número da nota (Coluna 0 da Base)
+                df_final['NF'] = df_base.iloc[:, 0].values
+                
+                # Cidades da Base de Notas (Coluna 2)
                 cid_notas = df_base.iloc[:, 2].astype(str).apply(super_limpeza).values
                 pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values
                 valores_notas = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0).values
@@ -204,7 +208,6 @@ elif menu == "💰 Comparativo":
                     fixas = get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC"))
                     
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + suframa + fluvial + redesp_flu + ped + fixas
-                    df_final['UF'] = df_tab_idx[m['tab_uf']].reindex(siglas_match).fillna("ND").values if m['tab_uf'] in df_tab_idx.columns else "ND"
 
                 supabase.table("cotacoes").insert({
                     "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
