@@ -33,7 +33,7 @@ def to_excel(df):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave-Maria Fretes")
-    st.info("Versão de Teste: 16.0")
+    st.info("Versão de Teste: 16.1")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -73,7 +73,6 @@ if menu == "📊 Dashboard":
                 m3.metric("Melhor Opção", df_filt[cols_sel].sum().idxmin().replace("TOTAL_", ""))
                 st.divider()
                 st.subheader("📋 Últimas Notas")
-                # Mostra apenas colunas essenciais na tela
                 cols_tela = ['NF'] + cols_sel
                 st.dataframe(df_filt[cols_tela], use_container_width=True)
     else: st.info("Sem dados no histórico.")
@@ -183,6 +182,8 @@ elif menu == "💰 Comparativo":
                         return np.zeros(len(df_base))
 
                     f_peso = np.zeros(len(df_base))
+                    v_kg_adic = np.zeros(len(df_base))
+                    
                     for faixa in m['faixas']:
                         v_f = get_v(faixa['col'])
                         mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0)
@@ -192,7 +193,8 @@ elif menu == "💰 Comparativo":
                     mask_e = (pesos_notas > u_max)
                     if mask_e.any():
                         v_b = get_v(m['faixas'][-1]['col']); v_ex = get_v(m['kg_extra'])
-                        f_peso[mask_e] = v_b[mask_e] + ((pesos_notas[mask_e] - u_max) * v_ex[mask_e])
+                        v_kg_adic[mask_e] = (pesos_notas[mask_e] - u_max) * v_ex[mask_e]
+                        f_peso[mask_e] = v_b[mask_e] + v_kg_adic[mask_e]
 
                     adv = np.maximum(valores_notas * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
                     grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
@@ -202,13 +204,15 @@ elif menu == "💰 Comparativo":
                     ctrc = get_v(m['taxas'].get("CTRC"))
                     outros = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                     
-                    # Detalhamento para a Exportação
-                    df_final[f'PESO_{t_nome}'] = f_peso
+                    # Detalhamento para a Exportação (Ordem Corrigida)
+                    df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
+                    df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
                     df_final[f'ADVAL_{t_nome}'] = adv
                     df_final[f'GRIS_{t_nome}'] = grs
                     df_final[f'EMEX_{t_nome}'] = emx
                     df_final[f'PEDAGIO_{t_nome}'] = ped
-                    df_final[f'TAS_CTRC_{t_nome}'] = tas + ctrc
+                    df_final[f'TAS_{t_nome}'] = tas
+                    df_final[f'CTRC_{t_nome}'] = ctrc
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
 
                 supabase.table("cotacoes").insert({
@@ -225,6 +229,7 @@ elif menu == "💰 Comparativo":
             det = []
             for d in g['detalhes_json']: det.extend(d)
             df_det = pd.DataFrame(det)
+            
             with st.expander(f"📦 {t_ref} | {len(det)} Notas"):
                 cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
                 
@@ -242,5 +247,5 @@ elif menu == "💰 Comparativo":
                 resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
                 st.table(resumo.style.format({'Frete Total': "R$ {:,.2f}"}))
                 
-                # Preview na tela apenas com NF e Totais
+                # Preview na tela (NF e Totais)
                 st.dataframe(df_det[['NF'] + cols_totais], use_container_width=True)
