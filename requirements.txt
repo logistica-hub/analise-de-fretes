@@ -5,3 +5,4 @@ openpyxl
 xlsxwriter
 gunicorn
 st-gsheets-connection
+supabase
