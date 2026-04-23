@@ -53,19 +53,17 @@ if menu == "📊 Dashboard":
         all_dfs = [pd.DataFrame(r['detalhes_json']) for r in res.data if r['detalhes_json']]
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
-            
             st.subheader("🎯 Filtros")
             lista_ufs = sorted([str(x) for x in df_total['UF'].dropna().unique() if x != ""])
             sel_uf = st.multiselect("Filtrar por UF", lista_ufs)
             if sel_uf: df_total = df_total[df_total['UF'].isin(sel_uf)]
             
             col_fretes = [c for c in df_total.columns if c.startswith("TOTAL_")]
-            
             c1, c2 = st.columns(2)
             c2.metric("Qtd Notas Únicas", len(df_total))
             
-            st.write("### 🌍 Comparativo de Gastos por UF")
             if col_fretes:
+                st.write("### 🌍 Comparativo de Gastos por UF")
                 cons = df_total.groupby('UF')[col_fretes].sum()
                 st.dataframe(cons.style.format(precision=2), use_container_width=True)
     else:
@@ -90,8 +88,7 @@ elif menu == "🚛 Transportadoras":
 
         if df_t is not None and df_a is not None:
             mapa = e_row['mapeamento_json'] if e_row is not None else {}
-            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
-            cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
+            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]; cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
             
             l1, l2 = st.columns(2)
             m_ap_cid = l1.selectbox("Abrangência: Cidade", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
@@ -103,8 +100,7 @@ elif menu == "🚛 Transportadoras":
             n_faixas = st.number_input("Qtd Faixas", 1, 50, len(mapa.get('faixas', [])) or 6)
             faixas = []
             for i in range(int(n_faixas)):
-                r = st.columns(3)
-                f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
+                r = st.columns(3); f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
                 faixas.append({
                     "min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"min{i}"),
                     "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"max{i}"),
@@ -139,15 +135,15 @@ elif menu == "💰 Comparativo":
     if f_notas and not df_ts.empty:
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
-            with st.spinner("Calculando..."):
-                df_base = pd.read_excel(f_notas).fillna(0)
-                # Garantir que o índice seja sequencial para evitar erros de mask
-                df_base = df_base.reset_index(drop=True)
+            with st.spinner("Vetorizando 18k linhas..."):
+                df_base = pd.read_excel(f_notas).fillna(0).reset_index(drop=True)
                 df_final = pd.DataFrame(index=df_base.index)
-                
-                # Preservar UF (usando a primeira transportadora como referência ou criando coluna)
                 df_final['UF'] = "ND"
-                df_base_k = df_base.iloc[:, 2].astype(str).apply(normalizar)
+                
+                # Normalização das chaves das Notas
+                chaves_notas = df_base.iloc[:, 2].astype(str).apply(normalizar)
+                pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values
+                valores_notas = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0).values
 
                 for t_nome in selecionadas:
                     t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
@@ -155,66 +151,58 @@ elif menu == "💰 Comparativo":
                     df_tab = pd.DataFrame(t_r['tabela_json'])
                     df_abr = pd.DataFrame(t_r['cidades_json'])
                     
-                    df_abr['K_REF'] = df_abr[m['ap_cidade']].astype(str).apply(normalizar)
-                    df_tab['K_TAB'] = df_tab[m['tab_sigla']].astype(str).apply(normalizar)
+                    # Criar Dicionários de De/Para (Mais rápido que Merge e evita duplicação)
+                    dic_abr = df_abr.set_index(df_abr[m['ap_cidade']].astype(str).apply(normalizar))[m['ap_sigla']].to_dict()
+                    siglas_match = chaves_notas.map(dic_abr).astype(str).apply(normalizar)
                     
-                    # Merge mantendo o índice original da base
-                    df_merge_abr = pd.merge(pd.DataFrame({'K_CID': df_base_k}), df_abr[[m['ap_sigla'], 'K_REF']], left_on='K_CID', right_on='K_REF', how='left')
-                    df_merge_abr['K_MATCH'] = df_merge_abr[m['ap_sigla']].astype(str).apply(normalizar)
-                    df_f = pd.merge(df_merge_abr, df_tab, left_on='K_MATCH', right_on='K_TAB', how='left')
-                    
-                    p_kg = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0)
-                    v_nf = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0)
-                    
-                    # Cálculo Frete Peso (Vetorizado sem .loc[mask] problemático)
+                    # Cálculo Frete Peso e Taxas
                     f_peso = np.zeros(len(df_base))
-                    for f in m['faixas']:
-                        if f['col'] in df_f.columns:
-                            col_vals = pd.to_numeric(df_f[f['col']], errors='coerce').fillna(0).values
-                            mask = (p_kg.values <= f['max']) & (f_peso == 0.0)
-                            f_peso[mask] = col_vals[mask]
+                    adval, gris, pedagio, outras = np.zeros(len(df_base)), np.zeros(len(df_base)), np.zeros(len(df_base)), np.zeros(len(df_base))
                     
-                    if m.get('kg_extra') in df_f.columns:
-                        u_max = m['faixas'][-1]['max']
-                        u_col = m['faixas'][-1]['col']
-                        extra_col = pd.to_numeric(df_f[m['kg_extra']], errors='coerce').fillna(0).values
-                        u_col_vals = pd.to_numeric(df_f[u_col], errors='coerce').fillna(0).values
-                        mask_e = (p_kg.values > u_max)
-                        f_peso[mask_e] = u_col_vals[mask_e] + ((p_kg.values[mask_e] - u_max) * extra_col[mask_e])
+                    # Prepara a tabela de preços indexada pela sigla
+                    df_tab_idx = df_tab.set_index(df_tab[m['tab_sigla']].astype(str).apply(normalizar))
+                    
+                    # Itera sobre faixas e taxas (Isso é rápido porque acessamos o index da tabela)
+                    for f in m['faixas']:
+                        if f['col'] in df_tab_idx.columns:
+                            precos_col = siglas_match.map(df_tab_idx[f['col']]).fillna(0).values
+                            mask = (pesos_notas <= f['max']) & (f_peso == 0.0)
+                            f_peso[mask] = precos_col[mask]
 
-                    def gv(n):
-                        c = m['taxas'].get(n, "Não mapear")
-                        return pd.to_numeric(df_f[c], errors='coerce').fillna(0).values if c in df_f.columns else np.zeros(len(df_base))
+                    if m.get('kg_extra') in df_tab_idx.columns:
+                        u_max, u_col = m['faixas'][-1]['max'], m['faixas'][-1]['col']
+                        mask_e = (pesos_notas > u_max)
+                        base_val = siglas_match.map(df_tab_idx[u_col]).fillna(0).values
+                        extra_val = siglas_match.map(df_tab_idx[m['kg_extra']]).fillna(0).values
+                        f_peso[mask_e] = base_val[mask_e] + ((pesos_notas[mask_e] - u_max) * extra_val[mask_e])
 
-                    adval = np.maximum(v_nf.values * gv("Ad Valorem %"), gv("Ad Valorem Min"))
-                    gris = np.maximum(v_nf.values * gv("Gris %"), gv("Gris Min"))
-                    pedagio = np.ceil(p_kg.values/100) * gv("Pedagio")
-                    outras = gv("TAS")+gv("CTRC")+gv("SEC-CAT")+gv("Suframa")+gv("EMEX")+gv("TRT")+gv("TDA")
+                    def get_taxa_values(taxa_nome):
+                        col = m['taxas'].get(taxa_nome, "Não mapear")
+                        if col in df_tab_idx.columns:
+                            return siglas_match.map(df_tab_idx[col]).fillna(0).values
+                        return np.zeros(len(df_base))
+
+                    adval = np.maximum(valores_notas * get_taxa_values("Ad Valorem %"), get_taxa_values("Ad Valorem Min"))
+                    gris = np.maximum(valores_notas * get_taxa_values("Gris %"), get_taxa_values("Gris Min"))
+                    pedagio = np.ceil(pesos_notas/100) * get_taxa_values("Pedagio")
+                    outras = get_taxa_values("TAS") + get_taxa_values("CTRC") + get_taxa_values("SEC-CAT") + get_taxa_values("Suframa") + get_taxa_values("EMEX") + get_taxa_values("TRT") + get_taxa_values("TDA")
                     
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adval + gris + pedagio + outras
-                    if m['tab_uf'] in df_f.columns:
-                        df_final['UF'] = df_f[m['tab_uf']].fillna("ND").values
+                    if m['tab_uf'] in df_tab_idx.columns:
+                        df_final['UF'] = siglas_match.map(df_tab_idx[m['tab_uf']]).fillna("ND").values
 
-                # Salvar apenas colunas de UF e Totais
                 df_save = df_final.replace([np.inf, -np.inf], 0).fillna(0)
                 lista_detalhes = df_save.to_dict(orient='records')
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
                 
-                # Payload enxuto enviando em blocos
+                # Envio em blocos para o Supabase
                 chunk_size = 5000
                 total_geral = float(df_save.filter(like='TOTAL_').sum().sum())
-                
                 for i in range(0, len(lista_detalhes), chunk_size):
-                    payload = {
-                        "data_hora": data_hora,
-                        "total": total_geral,
-                        "qtd": len(df_base),
-                        "detalhes_json": lista_detalhes[i : i + chunk_size]
-                    }
+                    payload = {"data_hora": data_hora, "total": total_geral, "qtd": len(df_base), "detalhes_json": lista_detalhes[i : i + chunk_size]}
                     supabase.table("cotacoes").insert(payload).execute()
                 
-                st.success("Calculado e Salvo!")
-                st.rerun()
+                st.success("Cálculo Finalizado!"); st.rerun()
 
     st.divider()
     st.subheader("🕒 Histórico")
@@ -225,7 +213,6 @@ elif menu == "💰 Comparativo":
             detalhes = []
             for d in g['detalhes_json']: detalhes.extend(d)
             df_hist = pd.DataFrame(detalhes)
-            
             with st.expander(f"📦 {t_ref} | {len(df_hist)} Notas"):
                 st.dataframe(df_hist, use_container_width=True)
                 if st.button("🗑️", key=f"del_{t_ref}"):
