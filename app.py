@@ -29,10 +29,9 @@ def formata_br(valor):
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,00"
 
-# --- SIDEBAR (LOGO E MENU) ---
+# --- SIDEBAR ---
 with st.sidebar:
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
-    
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
         if st.button("✏️ Alterar Logo"):
@@ -46,10 +45,8 @@ with st.sidebar:
 
     st.divider()
     menu = st.radio("Navegação", ["📊 Dashboard", "🚛 Transportadoras", "💰 Comparativo"])
-    st.divider()
-    st.caption("Conectado ao Supabase Cloud ✅")
 
-# --- DASHBOARD (PONTOS 4 E 5) ---
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     res = supabase.table("cotacoes").select("*").execute()
@@ -75,13 +72,12 @@ if menu == "📊 Dashboard":
             c2.metric("Qtd Notas", len(df_total))
             
             st.write("### 🌍 Consolidação UF e Valor")
-            if 'UF' in df_total.columns:
-                cons = df_total.groupby(['UF', 'T_NOME'])['VALOR_SISTEMA'].sum().reset_index()
-                st.dataframe(cons.sort_values('VALOR_SISTEMA', ascending=False), use_container_width=True)
+            cons = df_total.groupby(['UF', 'T_NOME'])['VALOR_SISTEMA'].sum().reset_index()
+            st.dataframe(cons.sort_values('VALOR_SISTEMA', ascending=False), use_container_width=True)
     else:
         st.info("Nenhum histórico encontrado.")
 
-# --- TRANSPORTADORAS (PONTO 2) ---
+# --- TRANSPORTADORAS ---
 elif menu == "🚛 Transportadoras":
     st.title("🚛 Gestão de Transportadoras")
     res_t = supabase.table("transportadoras").select("*").execute()
@@ -93,8 +89,7 @@ elif menu == "🚛 Transportadoras":
         
         nome_t = st.text_input("Nome da Transportadora", value=e_row['nome'] if e_row is not None else "").upper()
         c1, c2 = st.columns(2)
-        f_tab = c1.file_uploader("Tabela de Preços")
-        f_abr = c2.file_uploader("Abrangência")
+        f_tab, f_abr = c1.file_uploader("Tabela de Preços"), c2.file_uploader("Abrangência")
         
         df_t = pd.read_excel(f_tab).fillna(0) if f_tab else (pd.DataFrame(e_row['tabela_json']) if e_row is not None else None)
         df_a = pd.read_excel(f_abr).fillna(0) if f_abr else (pd.DataFrame(e_row['cidades_json']) if e_row is not None else None)
@@ -141,7 +136,7 @@ elif menu == "🚛 Transportadoras":
         if c[1].button("✏️", key=f"ed{r['id']}"): st.session_state.edit_id = r['id']; st.rerun()
         if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- COMPARATIVO (PONTO 3 - REGRAS DE EXPANSÃO) ---
+# --- COMPARATIVO (OTIMIZADO) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Comparativo Massivo (Vetorizado)")
     f_notas = st.file_uploader("Subir Notas Fiscais (Excel)", type=["xlsx"])
@@ -189,7 +184,6 @@ elif menu == "💰 Comparativo":
                     df_f['OUTRAS'] = gv("TAS")+gv("CTRC")+gv("SEC-CAT")+gv("Suframa")+gv("EMEX")+gv("TRT")+gv("TDA")
                     df_f['VALOR_SISTEMA'] = df_f['F_PESO']+df_f['ADVAL']+df_f['GRIS']+df_f['PEDAGIO']+df_f['OUTRAS']
                     
-                    # OTIMIZAÇÃO: Apenas colunas essenciais para o banco
                     df_slim = pd.DataFrame({
                         'T_NOME': t_nome, 'UF': df_f[m['tab_uf']] if m['tab_uf'] in df_f.columns else "ND",
                         'VALOR_SISTEMA': df_f['VALOR_SISTEMA'], 'F_PESO': df_f['F_PESO'],
@@ -198,27 +192,52 @@ elif menu == "💰 Comparativo":
                     resultados_lote.append(df_slim)
 
                 df_full = pd.concat(resultados_lote).replace([np.inf, -np.inf], 0).fillna(0)
-                payload = {"data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"), "total": float(df_full['VALOR_SISTEMA'].sum()), "qtd": len(df_base), "detalhes_json": df_full.to_dict(orient='records')}
-                try:
+                
+                # --- LÓGICA DE ENVIO EM PEDAÇOS (CHUNKED INSERT) ---
+                lista_detalhes = df_full.to_dict(orient='records')
+                chunk_size = 3000  # Enviar de 3000 em 3000 linhas
+                data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
+                total_final = float(df_full['VALOR_SISTEMA'].sum())
+                
+                progresso = st.progress(0)
+                for i in range(0, len(lista_detalhes), chunk_size):
+                    chunk = lista_detalhes[i : i + chunk_size]
+                    payload = {
+                        "data_hora": data_hora,
+                        "total": total_final,
+                        "qtd": len(df_base),
+                        "detalhes_json": chunk
+                    }
                     supabase.table("cotacoes").insert(payload).execute()
-                    st.rerun()
-                except:
-                    st.error("Payload muito grande. Tente menos transportadoras ou colunas.")
+                    progresso.progress(min((i + chunk_size) / len(lista_detalhes), 1.0))
+                
+                st.success("Cálculo processado e salvo em blocos com sucesso!")
+                st.rerun()
 
     st.divider()
     st.subheader("🕒 Histórico")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
-    for r in res_h.data:
-        with st.expander(f"📦 {r['data_hora']} | {r['qtd']} notas | R$ {formata_br(r['total'])}"):
-            df_h = pd.DataFrame(r['detalhes_json'])
-            trs = df_h['T_NOME'].unique()
-            if len(trs) == 1:
-                st.write(f"**Detalhamento Taxas: {trs[0]}**")
-                st.dataframe(df_h[['UF', 'VALOR_SISTEMA', 'F_PESO', 'ADVAL', 'GRIS', 'PEDAGIO', 'OUTRAS']], use_container_width=True)
-            else:
-                st.write("**Consolidado Comparativo**")
-                resumo = df_h.groupby('T_NOME')['VALOR_SISTEMA'].sum().reset_index()
-                resumo['VALOR_SISTEMA'] = resumo['VALOR_SISTEMA'].apply(lambda x: f"R$ {formata_br(x)}")
-                st.table(resumo)
-            if st.button("🗑️", key=f"del_{r['id']}"):
-                supabase.table("cotacoes").delete().eq("id", r['id']).execute(); st.rerun()
+    
+    # Agrupar registros do mesmo timestamp (devido ao chunking)
+    if res_h.data:
+        df_hist = pd.DataFrame(res_h.data)
+        for time_ref, group in df_hist.groupby("data_hora", sort=False):
+            # Une os detalhes_json de todos os chunks do mesmo cálculo
+            detalhes_completos = []
+            for d in group['detalhes_json']: detalhes_completos.extend(d)
+            df_h = pd.DataFrame(detalhes_completos)
+            
+            with st.expander(f"📦 {time_ref} | {len(df_h)} registros | R$ {formata_br(group['total'].iloc[0])}"):
+                trs = df_h['T_NOME'].unique()
+                if len(trs) == 1:
+                    st.dataframe(df_h[['UF', 'VALOR_SISTEMA', 'F_PESO', 'ADVAL', 'GRIS', 'PEDAGIO', 'OUTRAS']], use_container_width=True)
+                else:
+                    resumo = df_h.groupby('T_NOME')['VALOR_SISTEMA'].sum().reset_index()
+                    resumo['VALOR_SISTEMA'] = resumo['VALOR_SISTEMA'].apply(lambda x: f"R$ {formata_br(x)}")
+                    st.table(resumo)
+                
+                if st.button("🗑️ Excluir", key=f"del_{time_ref}"):
+                    # Deleta todos os chunks daquele horário
+                    for row_id in group['id']:
+                        supabase.table("cotacoes").delete().eq("id", row_id).execute()
+                    st.rerun()
