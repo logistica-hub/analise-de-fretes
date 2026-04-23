@@ -23,24 +23,42 @@ def super_limpeza(txt):
     txt = re.sub(r'\s+', ' ', txt) 
     return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
 
-def to_excel(df):
-    """Converte DataFrame para Excel (XLSX) com colunas de TOTAL ao final"""
-    # Identifica colunas de TOTAL
-    cols_total = [c for c in df.columns if c.startswith("TOTAL_")]
-    # Identifica as demais colunas
-    cols_outras = [c for c in df.columns if not c.startswith("TOTAL_")]
-    # Reordena para que os totais fiquem por último
-    df_reordenado = df[cols_outras + cols_total]
-    
+def to_excel_multisheet(df_detalhado, df_original):
+    """Gera Excel com aba Geral (original + totais) e abas individuais por transportadora"""
     output = BytesIO()
+    
+    # Identifica transportadoras pelos prefixos das colunas
+    cols_total = [c for c in df_detalhado.columns if c.startswith("TOTAL_")]
+    transportadoras = [c.replace("TOTAL_", "") for c in cols_total]
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_reordenado.to_excel(writer, index=False, sheet_name='Cotacao')
+        # --- ABA GERAL ---
+        df_geral = df_original.copy()
+        for t in transportadoras:
+            df_geral[f'TOTAL {t}'] = df_detalhado[f'TOTAL_{t}'].values
+        df_geral.to_excel(writer, index=False, sheet_name='Geral')
+        
+        # --- ABAS INDIVIDUAIS ---
+        for t in transportadoras:
+            # Seleciona apenas as colunas detalhadas desta transportadora
+            cols_t = ['NF'] + [c for c in df_detalhado.columns if c.endswith(f'_{t}')]
+            df_t = df_detalhado[cols_t].copy()
+            
+            # Limpa os nomes das colunas para a aba (remove o nome da transportadora do título da coluna)
+            df_t.columns = [c.replace(f'_{t}', '') for c in df_t.columns]
+            
+            # Reordena para o Total ser o último
+            cols_calc = [c for c in df_t.columns if c != 'TOTAL'] + ['TOTAL']
+            df_t = df_t[cols_calc]
+            
+            df_t.to_excel(writer, index=False, sheet_name=t[:31]) # Excel limita nome da aba a 31 caracteres
+            
     return output.getvalue()
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave-Maria Fretes")
-    st.info("Versão de Teste: 16.2")
+    st.info("Versão de Teste: 17.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -65,23 +83,15 @@ if menu == "📊 Dashboard":
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
             st.subheader("🎯 Filtros")
-            c_f2 = st.columns(1)[0]
-            cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
-            nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
-            sel_tr = c_f2.multiselect("Transportadoras", nomes_t, default=nomes_t)
+            sel_tr = st.multiselect("Transportadoras", [c.replace("TOTAL_", "") for c in df_total.columns if c.startswith("TOTAL_")])
             
-            df_filt = df_total.copy()
-            cols_sel = [f"TOTAL_{t}" for t in sel_tr]
-            
-            if not df_filt.empty and cols_sel:
+            if sel_tr:
+                cols_sel = [f"TOTAL_{t}" for t in sel_tr]
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Notas Processadas", len(df_filt))
-                m2.metric("Gasto Total", f"R$ {df_filt[cols_sel].sum().sum():,.2f}")
-                m3.metric("Melhor Opção", df_filt[cols_sel].sum().idxmin().replace("TOTAL_", ""))
-                st.divider()
-                st.subheader("📋 Últimas Notas")
-                cols_tela = ['NF'] + cols_sel
-                st.dataframe(df_filt[cols_tela], use_container_width=True)
+                m1.metric("Notas Processadas", len(df_total))
+                m2.metric("Gasto Total", f"R$ {df_total[cols_sel].sum().sum():,.2f}")
+                m3.metric("Melhor Opção", df_total[cols_sel].sum().idxmin().replace("TOTAL_", ""))
+                st.dataframe(df_total[['NF'] + cols_sel], use_container_width=True)
     else: st.info("Sem dados no histórico.")
 
 # --- CADASTRO ---
@@ -111,45 +121,35 @@ elif menu == "🚛 Cadastro de Transportadora":
             cm1, cm2 = st.columns(2)
             with cm1:
                 st.markdown("### 📋 Configuração Tabela")
-                m_tb_sig = st.selectbox("Coluna Sigla (na Tabela)", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
-                m_tb_uf = st.selectbox("Coluna UF (na Tabela)", cols_t, index=cols_t.index(mapa.get('tab_uf')) if mapa.get('tab_uf') in cols_t else 0)
-                col_kg_ex = st.selectbox("Coluna Kg Adicional", cols_t, index=cols_t.index(mapa.get('kg_extra')) if mapa.get('kg_extra') in cols_t else 0)
+                m_tb_sig = st.selectbox("Sigla (Tabela)", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
+                m_tb_uf = st.selectbox("UF (Tabela)", cols_t, index=cols_t.index(mapa.get('tab_uf')) if mapa.get('tab_uf') in cols_t else 0)
+                col_kg_ex = st.selectbox("Kg Adicional", cols_t, index=cols_t.index(mapa.get('kg_extra')) if mapa.get('kg_extra') in cols_t else 0)
             with cm2:
                 st.markdown("### 📍 Relação de Cidades")
-                m_ap_cid = st.selectbox("Coluna Cidade (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
-                m_ap_sig = st.selectbox("Coluna Sigla (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
+                m_ap_cid = st.selectbox("Cidade (Relação)", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
+                m_ap_sig = st.selectbox("Sigla (Relação)", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
             
-            st.divider()
-            st.markdown("### ⚖️ Mapeamento de Faixas de Peso")
-            n_f = st.number_input("Qtd Faixas de Peso", 1, 50, len(mapa.get('faixas', [])) or 6)
             faixas = []
+            st.divider()
+            n_f = st.number_input("Faixas de Peso", 1, 50, len(mapa.get('faixas', [])) or 6)
             for i in range(int(n_f)):
                 r = st.columns(3); f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
-                faixas.append({
-                    "min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}"),
-                    "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}"),
-                    "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")
-                })
+                faixas.append({"min": r[0].number_input("De", value=float(f_i.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input("Até", value=float(f_i.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox("Coluna", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")})
 
+            m_taxas = {}
             st.divider()
-            st.markdown("### 💰 Mapeamento de Taxas Adicionais")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "Fluvial", "Redespacho Fluvial"]
-            m_taxas = {}; tx_cols = st.columns(3)
+            tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
                 v_tx = mapa.get('taxas', {}).get(tx, "Não mapear")
                 m_taxas[tx] = tx_cols[idx % 3].selectbox(tx, cols_t, index=cols_t.index(v_tx) if v_tx in cols_t else 0, key=f"tx_{idx}")
 
-            if st.button("💾 Salvar Transportadora"):
+            if st.button("💾 Salvar"):
                 mapa_f = {"ap_cidade": m_ap_cid, "ap_sigla": m_ap_sig, "tab_sigla": m_tb_sig, "tab_uf": m_tb_uf, "faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_ex}
                 payload = {"nome": nome_t, "tabela_json": df_t.to_dict(orient='records'), "cidades_json": df_a.to_dict(orient='records'), "mapeamento_json": mapa_f}
                 if e_id: supabase.table("transportadoras").update(payload).eq("id", e_id).execute()
                 else: supabase.table("transportadoras").insert(payload).execute()
                 st.session_state.edit_id = None; st.session_state.form_reset_key += 1; st.rerun()
-
-    for _, r in df_list.iterrows():
-        c = st.columns([7, 1, 1]); c[0].write(f"**{r['nome']}**")
-        if c[1].button("✏️", key=f"ed{r['id']}"): st.session_state.edit_id = r['id']; st.rerun()
-        if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
 # --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
@@ -159,7 +159,7 @@ elif menu == "💰 Comparativo":
     df_ts = pd.DataFrame(res_t.data)
 
     if f_notas and not df_ts.empty:
-        selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
+        selecionadas = st.multiselect("Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
             with st.spinner("Processando..."):
                 df_base = pd.read_excel(f_notas).fillna(0)
@@ -172,34 +172,28 @@ elif menu == "💰 Comparativo":
 
                 for t_nome in selecionadas:
                     t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
-                    m = t_r['mapeamento_json']
-                    df_tab = pd.DataFrame(t_r['tabela_json'])
-                    df_abr = pd.DataFrame(t_r['cidades_json'])
-
+                    m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
+                    
                     df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
                     dic_ponte = df_abr.set_index('cid_clean')[m['ap_sigla']].astype(str).apply(super_limpeza).to_dict()
                     siglas_match = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
                     
-                    df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza)
-                    df_tab_idx = df_tab.set_index('sig_clean')
-
+                    df_tab_idx = df_tab.set_index(df_tab[m['tab_sigla']].astype(str).apply(super_limpeza))
                     def get_v(col):
                         if col and col != "Não mapear" and col in df_tab_idx.columns:
                             return df_tab_idx[col].reindex(siglas_match).fillna(0).values
                         return np.zeros(len(df_base))
 
-                    f_peso = np.zeros(len(df_base))
-                    v_kg_adic = np.zeros(len(df_base))
-                    
-                    for faixa in m['faixas']:
-                        v_f = get_v(faixa['col'])
-                        mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0)
+                    f_peso = np.zeros(len(df_base)); v_kg_adic = np.zeros(len(df_base))
+                    for fx in m['faixas']:
+                        v_f = get_v(fx['col'])
+                        mask = (pesos_notas <= fx['max']) & (f_peso == 0.0)
                         f_peso[mask] = v_f[mask]
                     
                     u_max = m['faixas'][-1]['max']
                     mask_e = (pesos_notas > u_max)
                     if mask_e.any():
-                        v_b = get_v(m['faixas'][-1]['col']); v_ex = get_v(m['kg_extra'])
+                        v_b, v_ex = get_v(m['faixas'][-1]['col']), get_v(m['kg_extra'])
                         v_kg_adic[mask_e] = (pesos_notas[mask_e] - u_max) * v_ex[mask_e]
                         f_peso[mask_e] = v_b[mask_e] + v_kg_adic[mask_e]
 
@@ -207,11 +201,9 @@ elif menu == "💰 Comparativo":
                     grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
                     emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
                     ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
-                    tas = get_v(m['taxas'].get("TAS"))
-                    ctrc = get_v(m['taxas'].get("CTRC"))
-                    outros = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
+                    tas, ctrc = get_v(m['taxas'].get("TAS")), get_v(m['taxas'].get("CTRC"))
+                    outros = (valores_notas * (get_v(m['taxas'].get("Suframa")) + get_v(m['taxas'].get("Fluvial")))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                     
-                    # Detalhamento para Exportação
                     df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
                     df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
                     df_final[f'ADVAL_{t_nome}'] = adv
@@ -221,37 +213,25 @@ elif menu == "💰 Comparativo":
                     df_final[f'TAS_{t_nome}'] = tas
                     df_final[f'CTRC_{t_nome}'] = ctrc
                     df_final[f'OUTROS_{t_nome}'] = outros
-                    # O total é calculado mas a reordenação final no to_excel joga para a última coluna
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
 
                 supabase.table("cotacoes").insert({
                     "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
                     "qtd": len(df_base),
-                    "detalhes_json": df_final.fillna(0).to_dict(orient='records')
+                    "detalhes_json": df_final.fillna(0).to_dict(orient='records'),
+                    "base_original_json": df_base.to_dict(orient='records') # Salva base para a aba Geral
                 }).execute()
                 st.success("Calculado!"); st.rerun()
 
-    st.divider()
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     if res_h.data:
         for t_ref, g in pd.DataFrame(res_h.data).groupby("data_hora", sort=False):
-            det = []
-            for d in g['detalhes_json']: det.extend(d)
-            df_det = pd.DataFrame(det)
-            
-            with st.expander(f"📦 {t_ref} | {len(det)} Notas"):
-                cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
-                
-                c_btn1, c_btn2 = st.columns(2)
-                xlsx_data = to_excel(df_det)
-                c_btn1.download_button(f"📥 Baixar Excel Detalhado", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
-                if c_btn2.button("🗑️ Remover Registro", key=f"del_{t_ref}"):
+            df_det = pd.DataFrame(g.iloc[0]['detalhes_json'])
+            df_orig = pd.DataFrame(g.iloc[0]['base_original_json'])
+            with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
+                xlsx_data = to_excel_multisheet(df_det, df_orig)
+                st.download_button(f"📥 Baixar Comparativo Multi-Abas", data=xlsx_data, file_name=f"Relatorio_{t_ref.replace('/','-')}.xlsx")
+                if st.button("🗑️ Remover", key=f"del_{t_ref}"):
                     for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
-
-                resumo = df_det[cols_totais].sum().reset_index()
-                resumo.columns = ['Transportadora', 'Frete Total']
-                resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
-                st.table(resumo.style.format({'Frete Total': "R$ {:,.2f}"}))
-                
-                st.dataframe(df_det[['NF'] + cols_totais], use_container_width=True)
+                st.dataframe(df_det[['NF'] + [c for c in df_det.columns if c.startswith("TOTAL_")]], use_container_width=True)
