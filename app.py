@@ -36,7 +36,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("Navegação", ["📊 Dashboard", "🚛 Cadastro de Transportadora", "💰 Comparativo"])
 
-# --- DASHBOARD (COM FILTROS) ---
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     res = supabase.table("cotacoes").select("*").execute()
@@ -80,18 +80,19 @@ elif menu == "🚛 Cadastro de Transportadora":
 
     with st.expander("📝 Configurar Mapeamento", expanded=st.session_state.get('edit_id') is not None):
         e_id = st.session_state.get('edit_id')
-        e_row = df_list[df_list['id'] == e_id].iloc[0] if e_id and not df_list.empty else None
+        # CORREÇÃO DO VALUERROR AQUI:
+        e_row = df_list[df_list['id'] == e_id].iloc[0] if e_id is not None and not df_list.empty else None
         
-        nome_t = st.text_input("Nome", value=e_row['nome'] if e_row else "", key=f"n_{st.session_state.form_reset_key}").upper()
+        nome_t = st.text_input("Nome", value=e_row['nome'] if e_row is not None else "", key=f"n_{st.session_state.form_reset_key}").upper()
         c1, c2 = st.columns(2)
         f_tab = c1.file_uploader("📂 Tabela de Preços", type=["xlsx"], key=f"t_{st.session_state.form_reset_key}")
         f_abr = c2.file_uploader("📂 Relação de Cidades (Siglas)", type=["xlsx"], key=f"a_{st.session_state.form_reset_key}")
         
-        df_t = pd.read_excel(f_tab).fillna(0) if f_tab else (pd.DataFrame(e_row['tabela_json']) if e_row else None)
-        df_a = pd.read_excel(f_abr).fillna(0) if f_abr else (pd.DataFrame(e_row['cidades_json']) if e_row else None)
+        df_t = pd.read_excel(f_tab).fillna(0) if f_tab else (pd.DataFrame(e_row['tabela_json']) if e_row is not None else None)
+        df_a = pd.read_excel(f_abr).fillna(0) if f_abr else (pd.DataFrame(e_row['cidades_json']) if e_row is not None else None)
 
         if df_t is not None and df_a is not None:
-            mapa = e_row['mapeamento_json'] if e_row else {}
+            mapa = e_row['mapeamento_json'] if e_row is not None else {}
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
             
@@ -151,12 +152,10 @@ elif menu == "💰 Comparativo":
                     t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
                     m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
 
-                    # Identificação da Sigla (Ponte Manual)
                     df_abr['cid_match'] = df_abr[m['ap_cidade']].astype(str).apply(normalizar)
                     dic_ponte = df_abr.set_index('cid_match')[m['ap_sigla']].astype(str).apply(normalizar).to_dict()
                     siglas_encontradas = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
                     
-                    # Busca na Tabela
                     df_tab['sig_match'] = df_tab[m['tab_sigla']].astype(str).apply(normalizar)
                     df_tab_idx = df_tab.set_index('sig_match')
 
@@ -165,7 +164,6 @@ elif menu == "💰 Comparativo":
                             return df_tab_idx[col].reindex(siglas_encontradas).fillna(0).values
                         return np.zeros(len(df_base))
 
-                    # Frete Peso
                     f_peso = np.zeros(len(df_base))
                     for faixa in m['faixas']:
                         v_f = get_v(faixa['col'])
@@ -178,7 +176,6 @@ elif menu == "💰 Comparativo":
                         v_b, v_ex = get_v(m['faixas'][-1]['col']), get_v(m['kg_extra'])
                         f_peso[mask_e] = v_b[mask_e] + ((pesos_notas[mask_e] - u_max) * v_ex[mask_e])
 
-                    # Taxas (Apenas o que for mapeado)
                     adv = np.maximum(valores_notas * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
                     grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
                     emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
@@ -189,9 +186,8 @@ elif menu == "💰 Comparativo":
                     df_final['UF'] = df_tab_idx[m['tab_uf']].reindex(siglas_encontradas).fillna("ND").values if m['tab_uf'] in df_tab_idx.columns else "ND"
 
                 supabase.table("cotacoes").insert({"data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"), "qtd": len(df_base), "detalhes_json": df_final.fillna(0).to_dict(orient='records')}).execute()
-                st.success("Calculado!"); st.rerun()
+                st.success("Cálculo Finalizado!"); st.rerun()
 
-    # Histórico
     st.divider()
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     if res_h.data:
