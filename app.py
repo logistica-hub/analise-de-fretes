@@ -10,30 +10,46 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS para tornar o Dashboard moderno
+# CSS para tornar o Dashboard moderno e limpo
 st.markdown("""
     <style>
+    /* Fundo do App */
+    .stApp {
+        background-color: #f8fafc;
+    }
+    /* Estilização dos Cards */
     .metric-card {
         background-color: #ffffff;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        border: 1px solid #eee;
+        padding: 24px;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid #e2e8f0;
         text-align: center;
+        transition: transform 0.2s;
+    }
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
     }
     .metric-label {
-        font-size: 14px;
-        color: #666;
-        margin-bottom: 5px;
-        font-weight: bold;
+        font-size: 13px;
+        color: #64748b;
+        margin-bottom: 8px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
     }
     .metric-value {
-        font-size: 24px;
-        color: #1f2937;
-        font-weight: bold;
+        font-size: 22px;
+        color: #1e293b;
+        font-weight: 800;
+    }
+    /* Títulos */
+    h1, h2, h3 {
+        color: #0f172a !important;
+        font-weight: 800 !important;
     }
     </style>
-""", unsafe_allow_stdio=True)
+""", unsafe_allow_html=True)
 
 @st.cache_resource
 def init_connection():
@@ -79,7 +95,7 @@ def to_excel(df_completo):
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.title("Ave Maria - Análise de Fretes")
+    st.title("Ave Maria")
     st.info("Versão 17.5")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
@@ -98,7 +114,7 @@ with st.sidebar:
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
-    st.title("📊 DashBoard")
+    st.title("📊 Indicadores de Frete")
     res = supabase.table("cotacoes").select("*").execute()
     
     if res.data:
@@ -108,15 +124,15 @@ if menu == "📊 Dashboard":
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
             
-            # Filtros em uma única linha
+            # Linha de Filtros Compacta
             f1, f2, f3 = st.columns(3)
             sel_tr = f1.multiselect("Transportadoras", nomes_t, default=nomes_t)
             col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
             lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
-            sel_uf = f2.multiselect("Filtrar por UF", lista_ufs, default=lista_ufs)
+            sel_uf = f2.multiselect("Estados (UF)", lista_ufs, default=lista_ufs)
             col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA']), None)
             lista_datas = sorted(df_total[col_data].unique()) if col_data else []
-            sel_data = f3.multiselect("Filtrar por Período", lista_datas, default=lista_datas)
+            sel_data = f3.multiselect("Período", lista_datas, default=lista_datas)
 
             df_filt = df_total.copy()
             if col_uf: df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
@@ -124,28 +140,31 @@ if menu == "📊 Dashboard":
             cols_sel = [f"TOTAL_{t}" for t in sel_tr]
             
             if not df_filt.empty and cols_sel:
-                # Métricas em Cards Modernos
+                # Cálculo de Métricas
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_filt.columns[7] if len(df_filt.columns)>7 else None)
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_filt.columns[6] if len(df_filt.columns)>6 else None)
                 peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
                 val_total_frete = df_filt[cols_sel].sum().sum()
 
+                # Exibição dos Cards Modernos
+                st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
-                with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">📦 NOTAS</div><div class="metric-value">{len(df_filt)}</div></div>', unsafe_allow_html=True)
-                with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">💰 VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
-                with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">⚖️ PESO TOTAL</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
-                with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">🚛 FRETE ACUMULADO</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
+                with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{len(df_filt)}</div></div>', unsafe_allow_html=True)
+                with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
+                with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">PESO TOTAL</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
+                with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">INVESTIMENTO EM FRETE</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
+                st.markdown("<br>", unsafe_allow_html=True)
 
-                st.markdown("### 🗺️ Comparativo de Custos por UF")
+                st.subheader("💰 Melhor Custo por Estado")
                 if col_uf:
                     df_uf = df_filt.groupby(col_uf)[cols_sel].sum()
                     df_uf.columns = [c.replace("TOTAL_", "") for c in df_uf.columns]
                     
-                    # Estilização: Menor valor de cada linha em verde
+                    # Estilização: Heatmap de menor valor por linha
                     def highlight_min(s):
                         is_min = s == s.min()
-                        return ['background-color: #dcfce7; color: #166534; font-weight: bold; border: 1px solid #bbf7d0' if v else 'color: #374151' for v in is_min]
+                        return ['background-color: #ecfdf5; color: #065f46; font-weight: bold; border: 1px solid #10b981' if v else 'color: #475569' for v in is_min]
 
                     st.dataframe(
                         df_uf.style.apply(highlight_min, axis=1).format(format_brl), 
@@ -153,8 +172,8 @@ if menu == "📊 Dashboard":
                         height=500
                     )
                 else:
-                    st.warning("Coluna 'UF' não encontrada na planilha original.")
-    else: st.info("Nenhum dado encontrado no histórico.")
+                    st.warning("Coluna 'UF' não encontrada.")
+    else: st.info("Sem histórico de cotações para exibir.")
 
 # --- CADASTRO ---
 elif menu == "🚛 Cadastro de Transportadora":
