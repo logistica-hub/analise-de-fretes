@@ -24,16 +24,23 @@ def super_limpeza(txt):
     return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
 
 def to_excel(df):
-    """Converte DataFrame para Excel (XLSX) em memória"""
+    """Converte DataFrame para Excel (XLSX) com colunas de TOTAL ao final"""
+    # Identifica colunas de TOTAL
+    cols_total = [c for c in df.columns if c.startswith("TOTAL_")]
+    # Identifica as demais colunas
+    cols_outras = [c for c in df.columns if not c.startswith("TOTAL_")]
+    # Reordena para que os totais fiquem por último
+    df_reordenado = df[cols_outras + cols_total]
+    
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Cotacao')
+        df_reordenado.to_excel(writer, index=False, sheet_name='Cotacao')
     return output.getvalue()
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave-Maria Fretes")
-    st.info("Versão de Teste: 16.1")
+    st.info("Versão de Teste: 16.2")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -204,7 +211,7 @@ elif menu == "💰 Comparativo":
                     ctrc = get_v(m['taxas'].get("CTRC"))
                     outros = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                     
-                    # Detalhamento para a Exportação (Ordem Corrigida)
+                    # Detalhamento para Exportação
                     df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
                     df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
                     df_final[f'ADVAL_{t_nome}'] = adv
@@ -213,6 +220,8 @@ elif menu == "💰 Comparativo":
                     df_final[f'PEDAGIO_{t_nome}'] = ped
                     df_final[f'TAS_{t_nome}'] = tas
                     df_final[f'CTRC_{t_nome}'] = ctrc
+                    df_final[f'OUTROS_{t_nome}'] = outros
+                    # O total é calculado mas a reordenação final no to_excel joga para a última coluna
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
 
                 supabase.table("cotacoes").insert({
@@ -233,7 +242,6 @@ elif menu == "💰 Comparativo":
             with st.expander(f"📦 {t_ref} | {len(det)} Notas"):
                 cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
                 
-                # Botões de Ação
                 c_btn1, c_btn2 = st.columns(2)
                 xlsx_data = to_excel(df_det)
                 c_btn1.download_button(f"📥 Baixar Excel Detalhado", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
@@ -241,11 +249,9 @@ elif menu == "💰 Comparativo":
                     for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
 
-                # Tabela Resumida na Tela
                 resumo = df_det[cols_totais].sum().reset_index()
                 resumo.columns = ['Transportadora', 'Frete Total']
                 resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
                 st.table(resumo.style.format({'Frete Total': "R$ {:,.2f}"}))
                 
-                # Preview na tela (NF e Totais)
                 st.dataframe(df_det[['NF'] + cols_totais], use_container_width=True)
