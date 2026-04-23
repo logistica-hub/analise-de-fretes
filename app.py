@@ -269,8 +269,8 @@ elif menu == "💰 Comparativo":
                 c_btn1, c_btn2 = st.columns(2)
                 # A função to_excel agora cuida de separar a aba Geral e as individuais
                 xlsx_data = to_excel(df_det)
-                c_btn1.download_button(f"📥 Baixar Relatório Multi-Abas", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
-                if c_btn2.button("🗑️ Remover Registro", key=f"del_{t_ref}"):
+                c_btn1.download_button(f"📥 Baixar Relatório Detalhado", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
+                if c_btn2.button("🗑️ Excluir Cotação", key=f"del_{t_ref}"):
                     for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
 
