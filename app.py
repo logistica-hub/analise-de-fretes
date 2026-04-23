@@ -54,13 +54,11 @@ if menu == "📊 Dashboard":
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
             
-            # No novo modelo, pegamos a transportadora com menor frete ou a principal para o gráfico
             st.subheader("🎯 Filtros")
             lista_ufs = sorted([str(x) for x in df_total['UF'].dropna().unique() if x != ""])
             sel_uf = st.multiselect("Filtrar por UF", lista_ufs)
             if sel_uf: df_total = df_total[df_total['UF'].isin(sel_uf)]
             
-            # Pegamos todas as colunas que começam com "TOTAL_" para as métricas
             col_fretes = [c for c in df_total.columns if c.startswith("TOTAL_")]
             
             c1, c2 = st.columns(2)
@@ -141,69 +139,81 @@ elif menu == "💰 Comparativo":
     if f_notas and not df_ts.empty:
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
-            with st.spinner("Vetorizando..."):
+            with st.spinner("Calculando..."):
                 df_base = pd.read_excel(f_notas).fillna(0)
-                df_final = df_base.copy()
-                # Colunas padrão para identificação
-                df_final['K_CID'] = df_final.iloc[:, 2].astype(str).apply(normalizar)
-                df_final['UF'] = "ND" 
+                # Garantir que o índice seja sequencial para evitar erros de mask
+                df_base = df_base.reset_index(drop=True)
+                df_final = pd.DataFrame(index=df_base.index)
+                
+                # Preservar UF (usando a primeira transportadora como referência ou criando coluna)
+                df_final['UF'] = "ND"
+                df_base_k = df_base.iloc[:, 2].astype(str).apply(normalizar)
 
                 for t_nome in selecionadas:
                     t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
-                    m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
+                    m = t_r['mapeamento_json']
+                    df_tab = pd.DataFrame(t_r['tabela_json'])
+                    df_abr = pd.DataFrame(t_r['cidades_json'])
                     
                     df_abr['K_REF'] = df_abr[m['ap_cidade']].astype(str).apply(normalizar)
                     df_tab['K_TAB'] = df_tab[m['tab_sigla']].astype(str).apply(normalizar)
                     
-                    df_m = pd.merge(df_final[['K_CID']], df_abr[[m['ap_sigla'], 'K_REF']], left_on='K_CID', right_on='K_REF', how='left')
-                    df_m['K_MATCH'] = df_m[m['ap_sigla']].astype(str).apply(normalizar)
-                    df_f = pd.merge(df_m, df_tab, left_on='K_MATCH', right_on='K_TAB', how='left')
+                    # Merge mantendo o índice original da base
+                    df_merge_abr = pd.merge(pd.DataFrame({'K_CID': df_base_k}), df_abr[[m['ap_sigla'], 'K_REF']], left_on='K_CID', right_on='K_REF', how='left')
+                    df_merge_abr['K_MATCH'] = df_merge_abr[m['ap_sigla']].astype(str).apply(normalizar)
+                    df_f = pd.merge(df_merge_abr, df_tab, left_on='K_MATCH', right_on='K_TAB', how='left')
                     
-                    p_kg, v_nf = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0), pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0)
+                    p_kg = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0)
+                    v_nf = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0)
                     
-                    # Cálculo Frete Peso
+                    # Cálculo Frete Peso (Vetorizado sem .loc[mask] problemático)
                     f_peso = np.zeros(len(df_base))
                     for f in m['faixas']:
                         if f['col'] in df_f.columns:
-                            mask = (p_kg <= f['max']) & (f_peso == 0.0)
-                            f_peso[mask] = pd.to_numeric(df_f.loc[mask, f['col']], errors='coerce').fillna(0)
+                            col_vals = pd.to_numeric(df_f[f['col']], errors='coerce').fillna(0).values
+                            mask = (p_kg.values <= f['max']) & (f_peso == 0.0)
+                            f_peso[mask] = col_vals[mask]
                     
                     if m.get('kg_extra') in df_f.columns:
-                        u_max, u_col = m['faixas'][-1]['max'], m['faixas'][-1]['col']
-                        mask_e = (p_kg > u_max)
-                        f_peso[mask_e] = pd.to_numeric(df_f.loc[mask_e, u_col], errors='coerce').fillna(0) + ((p_kg[mask_e]-u_max)*pd.to_numeric(df_f.loc[mask_e, m['kg_extra']], errors='coerce').fillna(0))
+                        u_max = m['faixas'][-1]['max']
+                        u_col = m['faixas'][-1]['col']
+                        extra_col = pd.to_numeric(df_f[m['kg_extra']], errors='coerce').fillna(0).values
+                        u_col_vals = pd.to_numeric(df_f[u_col], errors='coerce').fillna(0).values
+                        mask_e = (p_kg.values > u_max)
+                        f_peso[mask_e] = u_col_vals[mask_e] + ((p_kg.values[mask_e] - u_max) * extra_col[mask_e])
 
                     def gv(n):
                         c = m['taxas'].get(n, "Não mapear")
-                        return pd.to_numeric(df_f[c], errors='coerce').fillna(0) if c in df_f.columns else 0.0
+                        return pd.to_numeric(df_f[c], errors='coerce').fillna(0).values if c in df_f.columns else np.zeros(len(df_base))
 
-                    adval = np.maximum(v_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
-                    gris = np.maximum(v_nf * gv("Gris %"), gv("Gris Min"))
-                    pedagio = np.ceil(p_kg/100)*gv("Pedagio")
+                    adval = np.maximum(v_nf.values * gv("Ad Valorem %"), gv("Ad Valorem Min"))
+                    gris = np.maximum(v_nf.values * gv("Gris %"), gv("Gris Min"))
+                    pedagio = np.ceil(p_kg.values/100) * gv("Pedagio")
                     outras = gv("TAS")+gv("CTRC")+gv("SEC-CAT")+gv("Suframa")+gv("EMEX")+gv("TRT")+gv("TDA")
                     
-                    # Adiciona colunas ao DF final com o nome da transportadora
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adval + gris + pedagio + outras
-                    df_final['UF'] = df_f[m['tab_uf']].fillna("ND")
+                    if m['tab_uf'] in df_f.columns:
+                        df_final['UF'] = df_f[m['tab_uf']].fillna("ND").values
 
-                # Limpeza e Envio
-                df_save = df_final[[c for c in df_final.columns if c.startswith("TOTAL_") or c in ['UF']]].replace([np.inf, -np.inf], 0).fillna(0)
-                
-                # Chunking para segurança
+                # Salvar apenas colunas de UF e Totais
+                df_save = df_final.replace([np.inf, -np.inf], 0).fillna(0)
                 lista_detalhes = df_save.to_dict(orient='records')
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
+                
+                # Payload enxuto enviando em blocos
                 chunk_size = 5000
+                total_geral = float(df_save.filter(like='TOTAL_').sum().sum())
                 
                 for i in range(0, len(lista_detalhes), chunk_size):
                     payload = {
                         "data_hora": data_hora,
-                        "total": float(df_save.filter(like='TOTAL_').sum().sum()),
+                        "total": total_geral,
                         "qtd": len(df_base),
                         "detalhes_json": lista_detalhes[i : i + chunk_size]
                     }
                     supabase.table("cotacoes").insert(payload).execute()
                 
-                st.success("Calculado com sucesso!")
+                st.success("Calculado e Salvo!")
                 st.rerun()
 
     st.divider()
