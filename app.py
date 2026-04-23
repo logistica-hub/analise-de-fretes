@@ -10,6 +10,31 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
+# CSS para tornar o Dashboard moderno
+st.markdown("""
+    <style>
+    .metric-card {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        border: 1px solid #eee;
+        text-align: center;
+    }
+    .metric-label {
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    .metric-value {
+        font-size: 24px;
+        color: #1f2937;
+        font-weight: bold;
+    }
+    </style>
+""", unsafe_allow_stdio=True)
+
 @st.cache_resource
 def init_connection():
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
@@ -18,10 +43,12 @@ supabase = init_connection()
 
 def format_brl(val):
     """Formata valores para o padrão R$ 1.234,56"""
+    if pd.isna(val) or val == 0: return "R$ 0,00"
     return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def format_kg(val):
     """Formata valores para o padrão 1.234,56 kg"""
+    if pd.isna(val) or val == 0: return "0,00 kg"
     return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " kg"
 
 def super_limpeza(txt):
@@ -81,14 +108,15 @@ if menu == "📊 Dashboard":
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
             
-            c1, c2, c3 = st.columns(3)
-            sel_tr = c1.multiselect("Transportadoras", nomes_t, default=nomes_t)
+            # Filtros em uma única linha
+            f1, f2, f3 = st.columns(3)
+            sel_tr = f1.multiselect("Transportadoras", nomes_t, default=nomes_t)
             col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
             lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
-            sel_uf = c2.multiselect("Filtrar por UF", lista_ufs, default=lista_ufs)
+            sel_uf = f2.multiselect("Filtrar por UF", lista_ufs, default=lista_ufs)
             col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA']), None)
             lista_datas = sorted(df_total[col_data].unique()) if col_data else []
-            sel_data = c3.multiselect("Filtrar por Período", lista_datas, default=lista_datas)
+            sel_data = f3.multiselect("Filtrar por Período", lista_datas, default=lista_datas)
 
             df_filt = df_total.copy()
             if col_uf: df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
@@ -96,38 +124,37 @@ if menu == "📊 Dashboard":
             cols_sel = [f"TOTAL_{t}" for t in sel_tr]
             
             if not df_filt.empty and cols_sel:
-                st.markdown("---")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Notas Processadas", f"{len(df_filt)}")
-                
+                # Métricas em Cards Modernos
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_filt.columns[7] if len(df_filt.columns)>7 else None)
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
-                m2.metric("Valor Total Notas", format_brl(val_total_notas))
-                
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_filt.columns[6] if len(df_filt.columns)>6 else None)
                 peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
-                m3.metric("Peso Total", format_kg(peso_total))
-                
-                m4.metric("Valor Total Frete", format_brl(df_filt[cols_sel].sum().sum()))
+                val_total_frete = df_filt[cols_sel].sum().sum()
 
-                st.subheader("💰 Custo de Frete por UF")
+                m1, m2, m3, m4 = st.columns(4)
+                with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">📦 NOTAS</div><div class="metric-value">{len(df_filt)}</div></div>', unsafe_allow_html=True)
+                with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">💰 VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
+                with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">⚖️ PESO TOTAL</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
+                with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">🚛 FRETE ACUMULADO</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
+
+                st.markdown("### 🗺️ Comparativo de Custos por UF")
                 if col_uf:
                     df_uf = df_filt.groupby(col_uf)[cols_sel].sum()
                     df_uf.columns = [c.replace("TOTAL_", "") for c in df_uf.columns]
                     
-                    # Estilização da Tabela
+                    # Estilização: Menor valor de cada linha em verde
                     def highlight_min(s):
                         is_min = s == s.min()
-                        return ['background-color: #d1fae5; color: #065f46; font-weight: bold' if v else '' for v in is_min]
+                        return ['background-color: #dcfce7; color: #166534; font-weight: bold; border: 1px solid #bbf7d0' if v else 'color: #374151' for v in is_min]
 
                     st.dataframe(
                         df_uf.style.apply(highlight_min, axis=1).format(format_brl), 
                         use_container_width=True,
-                        height=400
+                        height=500
                     )
                 else:
-                    st.warning("Coluna de UF não identificada.")
-    else: st.info("Sem dados no histórico.")
+                    st.warning("Coluna 'UF' não encontrada na planilha original.")
+    else: st.info("Nenhum dado encontrado no histórico.")
 
 # --- CADASTRO ---
 elif menu == "🚛 Cadastro de Transportadora":
@@ -261,13 +288,14 @@ elif menu == "💰 Comparativo":
                     df_final[f'OUTROS_{t_nome}'] = outros
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
 
+                # Fuso Horário São Paulo
                 data_sao_paulo = datetime.utcnow() - timedelta(hours=3)
                 supabase.table("cotacoes").insert({
                     "data_hora": data_sao_paulo.strftime("%d/%m/%Y %H:%M"),
                     "qtd": len(df_base),
                     "detalhes_json": df_final.fillna(0).to_dict(orient='records')
                 }).execute()
-                st.success("Calculado!"); st.rerun()
+                st.success("Cálculo realizado com sucesso!"); st.rerun()
 
     st.divider()
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
