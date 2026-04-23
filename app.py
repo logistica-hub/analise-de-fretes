@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 import json
-import io
-import os
 from datetime import datetime
 import unicodedata
 import numpy as np
@@ -56,24 +54,22 @@ if menu == "📊 Dashboard":
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
             
+            # No novo modelo, pegamos a transportadora com menor frete ou a principal para o gráfico
             st.subheader("🎯 Filtros")
-            f1, f2 = st.columns(2)
             lista_ufs = sorted([str(x) for x in df_total['UF'].dropna().unique() if x != ""])
-            lista_transp = sorted([str(x) for x in df_total['T_NOME'].dropna().unique() if x != ""])
-            
-            sel_uf = f1.multiselect("Filtrar por UF", lista_ufs)
-            sel_tr = f2.multiselect("Filtrar por Transportadora", lista_transp)
-            
+            sel_uf = st.multiselect("Filtrar por UF", lista_ufs)
             if sel_uf: df_total = df_total[df_total['UF'].isin(sel_uf)]
-            if sel_tr: df_total = df_total[df_total['T_NOME'].isin(sel_tr)]
+            
+            # Pegamos todas as colunas que começam com "TOTAL_" para as métricas
+            col_fretes = [c for c in df_total.columns if c.startswith("TOTAL_")]
             
             c1, c2 = st.columns(2)
-            c1.metric("Total Cotado", f"R$ {formata_br(df_total['VALOR_SISTEMA'].sum())}")
-            c2.metric("Qtd Notas", len(df_total))
+            c2.metric("Qtd Notas Únicas", len(df_total))
             
-            st.write("### 🌍 Consolidação UF e Valor")
-            cons = df_total.groupby(['UF', 'T_NOME'])['VALOR_SISTEMA'].sum().reset_index()
-            st.dataframe(cons.sort_values('VALOR_SISTEMA', ascending=False), use_container_width=True)
+            st.write("### 🌍 Comparativo de Gastos por UF")
+            if col_fretes:
+                cons = df_total.groupby('UF')[col_fretes].sum()
+                st.dataframe(cons.style.format(precision=2), use_container_width=True)
     else:
         st.info("Nenhum histórico encontrado.")
 
@@ -125,8 +121,7 @@ elif menu == "🚛 Transportadoras":
 
             if st.button("💾 Salvar Transportadora"):
                 mapa_final = {"ap_cidade": m_ap_cid, "ap_sigla": m_ap_sig, "tab_sigla": m_tb_sig, "tab_uf": m_tb_uf, "faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_ex}
-                p_tabela = df_t.replace([np.inf, -np.inf], 0).fillna(0).to_dict(orient='records')
-                payload = {"nome": nome_t, "tabela_json": p_tabela, "cidades_json": df_a.to_dict(orient='records'), "mapeamento_json": mapa_final}
+                payload = {"nome": nome_t, "tabela_json": df_t.replace([np.inf, -np.inf], 0).fillna(0).to_dict(orient='records'), "cidades_json": df_a.to_dict(orient='records'), "mapeamento_json": mapa_final}
                 if e_id: supabase.table("transportadoras").update(payload).eq("id", e_id).execute()
                 else: supabase.table("transportadoras").insert(payload).execute()
                 st.session_state.edit_id = None; st.rerun()
@@ -136,9 +131,9 @@ elif menu == "🚛 Transportadoras":
         if c[1].button("✏️", key=f"ed{r['id']}"): st.session_state.edit_id = r['id']; st.rerun()
         if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- COMPARATIVO (OTIMIZADO) ---
+# --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
-    st.title("💰 Comparativo Massivo (Vetorizado)")
+    st.title("💰 Comparativo por Nota Fiscal")
     f_notas = st.file_uploader("Subir Notas Fiscais (Excel)", type=["xlsx"])
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
@@ -146,98 +141,83 @@ elif menu == "💰 Comparativo":
     if f_notas and not df_ts.empty:
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
-            with st.spinner("Processando 18k linhas..."):
+            with st.spinner("Vetorizando..."):
                 df_base = pd.read_excel(f_notas).fillna(0)
-                resultados_lote = []
+                df_final = df_base.copy()
+                # Colunas padrão para identificação
+                df_final['K_CID'] = df_final.iloc[:, 2].astype(str).apply(normalizar)
+                df_final['UF'] = "ND" 
+
                 for t_nome in selecionadas:
                     t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
                     m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
                     
-                    df_c = df_base.copy()
-                    df_c['K_CID'] = df_c.iloc[:, 2].astype(str).apply(normalizar)
                     df_abr['K_REF'] = df_abr[m['ap_cidade']].astype(str).apply(normalizar)
                     df_tab['K_TAB'] = df_tab[m['tab_sigla']].astype(str).apply(normalizar)
                     
-                    df_m = pd.merge(df_c, df_abr[[m['ap_sigla'], 'K_REF']], left_on='K_CID', right_on='K_REF', how='left')
+                    df_m = pd.merge(df_final[['K_CID']], df_abr[[m['ap_sigla'], 'K_REF']], left_on='K_CID', right_on='K_REF', how='left')
                     df_m['K_MATCH'] = df_m[m['ap_sigla']].astype(str).apply(normalizar)
                     df_f = pd.merge(df_m, df_tab, left_on='K_MATCH', right_on='K_TAB', how='left')
                     
-                    p_kg, v_nf = pd.to_numeric(df_f.iloc[:, 6], errors='coerce').fillna(0), pd.to_numeric(df_f.iloc[:, 7], errors='coerce').fillna(0)
-                    df_f['F_PESO'] = 0.0
+                    p_kg, v_nf = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0), pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0)
+                    
+                    # Cálculo Frete Peso
+                    f_peso = np.zeros(len(df_base))
                     for f in m['faixas']:
                         if f['col'] in df_f.columns:
-                            mask = (p_kg <= f['max']) & (df_f['F_PESO'] == 0.0)
-                            df_f.loc[mask, 'F_PESO'] = pd.to_numeric(df_f.loc[mask, f['col']], errors='coerce').fillna(0)
+                            mask = (p_kg <= f['max']) & (f_peso == 0.0)
+                            f_peso[mask] = pd.to_numeric(df_f.loc[mask, f['col']], errors='coerce').fillna(0)
                     
                     if m.get('kg_extra') in df_f.columns:
                         u_max, u_col = m['faixas'][-1]['max'], m['faixas'][-1]['col']
-                        m_e = (p_kg > u_max)
-                        df_f.loc[m_e, 'F_PESO'] = pd.to_numeric(df_f.loc[m_e, u_col], errors='coerce').fillna(0) + ((p_kg[m_e]-u_max)*pd.to_numeric(df_f.loc[m_e, m['kg_extra']], errors='coerce').fillna(0))
+                        mask_e = (p_kg > u_max)
+                        f_peso[mask_e] = pd.to_numeric(df_f.loc[mask_e, u_col], errors='coerce').fillna(0) + ((p_kg[mask_e]-u_max)*pd.to_numeric(df_f.loc[mask_e, m['kg_extra']], errors='coerce').fillna(0))
 
                     def gv(n):
                         c = m['taxas'].get(n, "Não mapear")
                         return pd.to_numeric(df_f[c], errors='coerce').fillna(0) if c in df_f.columns else 0.0
 
-                    df_f['ADVAL'] = np.maximum(v_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
-                    df_f['GRIS'] = np.maximum(v_nf * gv("Gris %"), gv("Gris Min"))
-                    df_f['PEDAGIO'] = np.ceil(p_kg/100)*gv("Pedagio")
-                    df_f['OUTRAS'] = gv("TAS")+gv("CTRC")+gv("SEC-CAT")+gv("Suframa")+gv("EMEX")+gv("TRT")+gv("TDA")
-                    df_f['VALOR_SISTEMA'] = df_f['F_PESO']+df_f['ADVAL']+df_f['GRIS']+df_f['PEDAGIO']+df_f['OUTRAS']
+                    adval = np.maximum(v_nf * gv("Ad Valorem %"), gv("Ad Valorem Min"))
+                    gris = np.maximum(v_nf * gv("Gris %"), gv("Gris Min"))
+                    pedagio = np.ceil(p_kg/100)*gv("Pedagio")
+                    outras = gv("TAS")+gv("CTRC")+gv("SEC-CAT")+gv("Suframa")+gv("EMEX")+gv("TRT")+gv("TDA")
                     
-                    df_slim = pd.DataFrame({
-                        'T_NOME': t_nome, 'UF': df_f[m['tab_uf']] if m['tab_uf'] in df_f.columns else "ND",
-                        'VALOR_SISTEMA': df_f['VALOR_SISTEMA'], 'F_PESO': df_f['F_PESO'],
-                        'ADVAL': df_f['ADVAL'], 'GRIS': df_f['GRIS'], 'PEDAGIO': df_f['PEDAGIO'], 'OUTRAS': df_f['OUTRAS']
-                    })
-                    resultados_lote.append(df_slim)
+                    # Adiciona colunas ao DF final com o nome da transportadora
+                    df_final[f'TOTAL_{t_nome}'] = f_peso + adval + gris + pedagio + outras
+                    df_final['UF'] = df_f[m['tab_uf']].fillna("ND")
 
-                df_full = pd.concat(resultados_lote).replace([np.inf, -np.inf], 0).fillna(0)
+                # Limpeza e Envio
+                df_save = df_final[[c for c in df_final.columns if c.startswith("TOTAL_") or c in ['UF']]].replace([np.inf, -np.inf], 0).fillna(0)
                 
-                # --- LÓGICA DE ENVIO EM PEDAÇOS (CHUNKED INSERT) ---
-                lista_detalhes = df_full.to_dict(orient='records')
-                chunk_size = 3000  # Enviar de 3000 em 3000 linhas
+                # Chunking para segurança
+                lista_detalhes = df_save.to_dict(orient='records')
                 data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
-                total_final = float(df_full['VALOR_SISTEMA'].sum())
+                chunk_size = 5000
                 
-                progresso = st.progress(0)
                 for i in range(0, len(lista_detalhes), chunk_size):
-                    chunk = lista_detalhes[i : i + chunk_size]
                     payload = {
                         "data_hora": data_hora,
-                        "total": total_final,
+                        "total": float(df_save.filter(like='TOTAL_').sum().sum()),
                         "qtd": len(df_base),
-                        "detalhes_json": chunk
+                        "detalhes_json": lista_detalhes[i : i + chunk_size]
                     }
                     supabase.table("cotacoes").insert(payload).execute()
-                    progresso.progress(min((i + chunk_size) / len(lista_detalhes), 1.0))
                 
-                st.success("Cálculo processado e salvo em blocos com sucesso!")
+                st.success("Calculado com sucesso!")
                 st.rerun()
 
     st.divider()
     st.subheader("🕒 Histórico")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
-    
-    # Agrupar registros do mesmo timestamp (devido ao chunking)
     if res_h.data:
-        df_hist = pd.DataFrame(res_h.data)
-        for time_ref, group in df_hist.groupby("data_hora", sort=False):
-            # Une os detalhes_json de todos os chunks do mesmo cálculo
-            detalhes_completos = []
-            for d in group['detalhes_json']: detalhes_completos.extend(d)
-            df_h = pd.DataFrame(detalhes_completos)
+        df_h_raw = pd.DataFrame(res_h.data)
+        for t_ref, g in df_h_raw.groupby("data_hora", sort=False):
+            detalhes = []
+            for d in g['detalhes_json']: detalhes.extend(d)
+            df_hist = pd.DataFrame(detalhes)
             
-            with st.expander(f"📦 {time_ref} | {len(df_h)} registros | R$ {formata_br(group['total'].iloc[0])}"):
-                trs = df_h['T_NOME'].unique()
-                if len(trs) == 1:
-                    st.dataframe(df_h[['UF', 'VALOR_SISTEMA', 'F_PESO', 'ADVAL', 'GRIS', 'PEDAGIO', 'OUTRAS']], use_container_width=True)
-                else:
-                    resumo = df_h.groupby('T_NOME')['VALOR_SISTEMA'].sum().reset_index()
-                    resumo['VALOR_SISTEMA'] = resumo['VALOR_SISTEMA'].apply(lambda x: f"R$ {formata_br(x)}")
-                    st.table(resumo)
-                
-                if st.button("🗑️ Excluir", key=f"del_{time_ref}"):
-                    # Deleta todos os chunks daquele horário
-                    for row_id in group['id']:
-                        supabase.table("cotacoes").delete().eq("id", row_id).execute()
+            with st.expander(f"📦 {t_ref} | {len(df_hist)} Notas"):
+                st.dataframe(df_hist, use_container_width=True)
+                if st.button("🗑️", key=f"del_{t_ref}"):
+                    for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
