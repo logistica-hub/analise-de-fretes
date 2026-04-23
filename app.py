@@ -10,14 +10,10 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS para tornar o Dashboard moderno e limpo
+# CSS Original do Usuário
 st.markdown("""
     <style>
-    /* Fundo do App */
-    .stApp {
-        background-color: #f8fafc;
-    }
-    /* Estilização dos Cards */
+    .stApp { background-color: #f8fafc; }
     .metric-card {
         background-color: #ffffff;
         padding: 24px;
@@ -43,11 +39,7 @@ st.markdown("""
         color: #1e293b;
         font-weight: 800;
     }
-    /* Títulos */
-    h1, h2, h3 {
-        color: #0f172a !important;
-        font-weight: 800 !important;
-    }
+    h1, h2, h3 { color: #0f172a !important; font-weight: 800 !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -58,12 +50,10 @@ def init_connection():
 supabase = init_connection()
 
 def format_brl(val):
-    """Formata valores para o padrão R$ 1.234,56"""
     if pd.isna(val) or val == 0: return "R$ 0,00"
     return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def format_kg(val):
-    """Formata valores para o padrão 1.234,56 kg"""
     if pd.isna(val) or val == 0: return "0,00 kg"
     return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " kg"
 
@@ -75,22 +65,37 @@ def super_limpeza(txt):
 
 def to_excel(df_completo):
     output = BytesIO()
+    # Identifica as transportadoras pelos sufixos das colunas de TOTAL
     cols_total = [c for c in df_completo.columns if c.startswith("TOTAL_")]
     transportadoras = [c.replace("TOTAL_", "") for c in cols_total]
-    prefixos_calculo = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "OUTROS_", "TOTAL_"]
-    cols_originais = [c for c in df_completo.columns if not any(c.startswith(p) for p in prefixos_calculo)]
+    
+    # Prefixos que criamos no cálculo
+    prefixos = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "OUTROS_", "TOTAL_"]
+    
+    # Colunas que NÃO são de cálculo (as originais da planilha do usuário)
+    cols_originais = [c for c in df_completo.columns if not any(c.startswith(p) for p in prefixos)]
     
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Aba Geral: Apenas colunas originais + os Totais de cada transportadora
         df_geral = df_completo[cols_originais + cols_total].copy()
         df_geral.to_excel(writer, index=False, sheet_name='Geral')
+        
+        # Abas Individuais: Detalhamento taxa a taxa
         for t in transportadoras:
-            cols_calc_t = [c for c in df_completo.columns if c.endswith(f'_{t}')]
-            df_t = df_completo[cols_originais + cols_calc_t].copy()
-            df_t.columns = [c.replace(f'_{t}', '') if c.endswith(f'_{t}') else c for c in df_t.columns]
+            # Pega colunas originais + todas as colunas que terminam com o nome desta transportadora
+            cols_especificas = [c for c in df_completo.columns if c.endswith(f'_{t}')]
+            df_t = df_completo[cols_originais + cols_especificas].copy()
+            
+            # Limpa o nome das colunas (remove o _NomeDaTransportadora) para ficar legível
+            df_t.columns = [c.replace(f'_{t}', '') for c in df_t.columns]
+            
+            # Reorganiza para o TOTAL ficar por último na aba
             if 'TOTAL' in df_t.columns:
-                cols_finais = [c for c in df_t.columns if c != 'TOTAL'] + ['TOTAL']
-                df_t = df_t[cols_finais]
-            df_t.to_excel(writer, index=False, sheet_name=t[:31])
+                cols_ordenadas = [c for c in df_t.columns if c != 'TOTAL'] + ['TOTAL']
+                df_t = df_t[cols_ordenadas]
+                
+            df_t.to_excel(writer, index=False, sheet_name=t[:31]) # Excel limita nome da aba a 31 caracteres
+            
     return output.getvalue()
 
 # --- SIDEBAR ---
@@ -124,7 +129,6 @@ if menu == "📊 Dashboard":
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
             
-            # Linha de Filtros Compacta
             f1, f2, f3 = st.columns(3)
             sel_tr = f1.multiselect("Transportadoras", nomes_t, default=nomes_t)
             col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
@@ -140,14 +144,12 @@ if menu == "📊 Dashboard":
             cols_sel = [f"TOTAL_{t}" for t in sel_tr]
             
             if not df_filt.empty and cols_sel:
-                # Cálculo de Métricas
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_filt.columns[7] if len(df_filt.columns)>7 else None)
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_filt.columns[6] if len(df_filt.columns)>6 else None)
                 peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
                 val_total_frete = df_filt[cols_sel].sum().sum()
 
-                # Exibição dos Cards Modernos
                 st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
                 with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{len(df_filt)}</div></div>', unsafe_allow_html=True)
@@ -160,19 +162,10 @@ if menu == "📊 Dashboard":
                 if col_uf:
                     df_uf = df_filt.groupby(col_uf)[cols_sel].sum()
                     df_uf.columns = [c.replace("TOTAL_", "") for c in df_uf.columns]
-                    
-                    # Estilização: Heatmap de menor valor por linha
                     def highlight_min(s):
                         is_min = s == s.min()
                         return ['background-color: #ecfdf5; color: #065f46; font-weight: bold; border: 1px solid #10b981' if v else 'color: #475569' for v in is_min]
-
-                    st.dataframe(
-                        df_uf.style.apply(highlight_min, axis=1).format(format_brl), 
-                        use_container_width=True,
-                        height=500
-                    )
-                else:
-                    st.warning("Coluna 'UF' não encontrada.")
+                    st.dataframe(df_uf.style.apply(highlight_min, axis=1).format(format_brl), use_container_width=True, height=500)
     else: st.info("Sem histórico de cotações para exibir.")
 
 # --- CADASTRO ---
@@ -198,7 +191,6 @@ elif menu == "🚛 Cadastro de Transportadora":
             mapa = e_row['mapeamento_json'] if e_row is not None else {}
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
-            
             cm1, cm2 = st.columns(2)
             with cm1:
                 st.markdown("### 📋 Configuração Tabela")
@@ -296,6 +288,7 @@ elif menu == "💰 Comparativo":
                     ctrc = get_v(m['taxas'].get("CTRC"))
                     outros = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                     
+                    # Detalhamento para o Excel
                     df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
                     df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
                     df_final[f'ADVAL_{t_nome}'] = adv
@@ -307,7 +300,6 @@ elif menu == "💰 Comparativo":
                     df_final[f'OUTROS_{t_nome}'] = outros
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
 
-                # Tenta salvar no Supabase, caso dê erro de API (tamanho de arquivo), avisa o usuário
                 try:
                     data_sao_paulo = datetime.utcnow() - timedelta(hours=3)
                     supabase.table("cotacoes").insert({
@@ -315,20 +307,19 @@ elif menu == "💰 Comparativo":
                         "qtd": len(df_base),
                         "detalhes_json": df_final.fillna(0).to_dict(orient='records')
                     }).execute()
-                    st.success("Cálculo realizado com sucesso!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao salvar histórico: O arquivo de notas pode ser grande demais para o banco de dados. O cálculo foi feito, mas não pôde ser gravado.")
+                    st.success("Cálculo realizado com sucesso!"); st.rerun()
+                except Exception:
+                    st.error("Erro ao salvar histórico. O arquivo pode ser muito grande.")
 
     st.divider()
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     if res_h.data:
         for t_ref, g in pd.DataFrame(res_h.data).groupby("data_hora", sort=False):
             det = []
-            for d in g['detalhes_json']: det.extend(d)
+            for d in g['detalhes_json']: det.extend(d) if isinstance(d, list) else det.append(d)
             df_det = pd.DataFrame(det)
             
-            with st.expander(f"📦 {t_ref} | {len(det)} Notas"):
+            with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
                 cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
                 c_btn1, c_btn2 = st.columns(2)
                 xlsx_data = to_excel(df_det)
