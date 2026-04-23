@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import unicodedata
 import re
 from io import BytesIO
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Ave-Maria | Sistema de Fretes", layout="wide")
+st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
 @st.cache_resource
 def init_connection():
@@ -26,44 +26,31 @@ def super_limpeza(txt):
 def to_excel(df_completo):
     """Gera Excel com múltiplas abas: Geral e Transportadoras"""
     output = BytesIO()
-    
-    # Identifica colunas de cálculo (as que têm prefixos de taxas ou TOTAL_)
     cols_total = [c for c in df_completo.columns if c.startswith("TOTAL_")]
     transportadoras = [c.replace("TOTAL_", "") for c in cols_total]
     
-    # Identifica colunas originais (aquelas que NÃO são colunas de cálculo)
     prefixos_calculo = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "OUTROS_", "TOTAL_"]
     cols_originais = [c for c in df_completo.columns if not any(c.startswith(p) for p in prefixos_calculo)]
     
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # --- ABA GERAL ---
-        # Colunas originais + Colunas de Total no final
         df_geral = df_completo[cols_originais + cols_total].copy()
         df_geral.to_excel(writer, index=False, sheet_name='Geral')
         
-        # --- ABAS POR TRANSPORTADORA ---
         for t in transportadoras:
-            # Seleciona colunas originais + cálculos desta transportadora específica
             cols_calc_t = [c for c in df_completo.columns if c.endswith(f'_{t}')]
             df_t = df_completo[cols_originais + cols_calc_t].copy()
-            
-            # Limpa o nome das colunas de cálculo (remove o _NOME_DA_TRANS)
             df_t.columns = [c.replace(f'_{t}', '') if c.endswith(f'_{t}') else c for c in df_t.columns]
-            
-            # Garante que a coluna TOTAL da aba seja a última
             if 'TOTAL' in df_t.columns:
                 cols_finais = [c for c in df_t.columns if c != 'TOTAL'] + ['TOTAL']
                 df_t = df_t[cols_finais]
-            
-            # Excel limita nome da aba a 31 caracteres
             df_t.to_excel(writer, index=False, sheet_name=t[:31])
             
     return output.getvalue()
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.title("Ave-Maria Fretes")
-    st.info("Versão de Teste: 17.1")
+    st.title("Ave Maria - Análise de Fretes")
+    st.info("Versão 17.5")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -81,31 +68,66 @@ with st.sidebar:
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
-    st.title("📊 Indicadores de Frete")
+    st.title("📊 DashBoard")
     res = supabase.table("cotacoes").select("*").execute()
+    
     if res.data:
         all_dfs = [pd.DataFrame(r['detalhes_json']) for r in res.data if r['detalhes_json']]
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
-            st.subheader("🎯 Filtros")
-            c_f2 = st.columns(1)[0]
+            
+            # Identificação de colunas dinâmicas
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
-            sel_tr = c_f2.multiselect("Transportadoras", nomes_t, default=nomes_t)
             
+            # Filtros Modernos em Colunas
+            c1, c2, c3 = st.columns(3)
+            sel_tr = c1.multiselect("Transportadoras", nomes_t, default=nomes_t)
+            
+            # Filtro por UF (tentando localizar a coluna de UF da planilha original)
+            col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
+            lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
+            sel_uf = c2.multiselect("Filtrar por UF", lista_ufs, default=lista_ufs)
+
+            # Filtro por Mês/Data (tentando localizar coluna de Mês ou Data)
+            col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA']), None)
+            lista_datas = sorted(df_total[col_data].unique()) if col_data else []
+            sel_data = c3.multiselect("Filtrar por Período", lista_datas, default=lista_datas)
+
+            # Aplicação dos Filtros
             df_filt = df_total.copy()
+            if col_uf: df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
+            if col_data: df_filt = df_filt[df_filt[col_data].isin(sel_data)]
             cols_sel = [f"TOTAL_{t}" for t in sel_tr]
             
             if not df_filt.empty and cols_sel:
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Notas Processadas", len(df_filt))
-                m2.metric("Gasto Total", f"R$ {df_filt[cols_sel].sum().sum():,.2f}")
-                m3.metric("Melhor Opção", df_filt[cols_sel].sum().idxmin().replace("TOTAL_", ""))
-                st.divider()
-                st.subheader("📋 Últimas Notas")
-                # Tenta pegar 'NF' ou a primeira coluna
-                nf_col = 'NF' if 'NF' in df_filt.columns else df_filt.columns[0]
-                st.dataframe(df_filt[[nf_col] + cols_sel], use_container_width=True)
+                # Métricas Modernas
+                st.markdown("---")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Notas Processadas", f"{len(df_filt)}")
+                
+                # Valor total das notas (Assumindo coluna VALOR NF ou similar)
+                col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_filt.columns[7] if len(df_filt.columns)>7 else None)
+                val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
+                m2.metric("Valor Total Notas", f"R$ {val_total_notas:,.2f}")
+                
+                # Peso Total (Assumindo coluna PESO)
+                col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_filt.columns[6] if len(df_filt.columns)>6 else None)
+                peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
+                m3.metric("Peso Total", f"{peso_total:,.2f} kg")
+                
+                m4.metric("Valor Total Frete", f"R$ {df_filt[cols_sel].sum().sum():,.2f}")
+
+                # Gráfico/Tabela por UF (Custo por Transportadora por UF)
+                st.subheader("💰 Custo Total de Frete por UF")
+                if col_uf:
+                    df_uf = df_filt.groupby(col_uf)[cols_sel].sum()
+                    # Renomear colunas para tirar o "TOTAL_" na exibição
+                    df_uf.columns = [c.replace("TOTAL_", "") for c in df_uf.columns]
+                    st.bar_chart(df_uf)
+                    st.dataframe(df_uf.style.format("R$ {:,.2f}"), use_container_width=True)
+                else:
+                    st.warning("Coluna de UF não identificada para gerar o visual por estado.")
     else: st.info("Sem dados no histórico.")
 
 # --- CADASTRO ---
@@ -187,7 +209,6 @@ elif menu == "💰 Comparativo":
         if selecionadas and st.button("🚀 Calcular"):
             with st.spinner("Processando..."):
                 df_base = pd.read_excel(f_notas).fillna(0)
-                # O df_final agora começa com uma cópia da base para não perdermos nada
                 df_final = df_base.copy()
                 
                 cid_notas = df_base.iloc[:, 2].astype(str).apply(super_limpeza).values
@@ -235,7 +256,6 @@ elif menu == "💰 Comparativo":
                     ctrc = get_v(m['taxas'].get("CTRC"))
                     outros = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                     
-                    # Detalhamento para Exportação concatenado ao DF
                     df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
                     df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
                     df_final[f'ADVAL_{t_nome}'] = adv
@@ -247,9 +267,10 @@ elif menu == "💰 Comparativo":
                     df_final[f'OUTROS_{t_nome}'] = outros
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
 
-                # Salva o dataframe COMPLETO no banco
+                # Correção do Horário para São Paulo (UTC-3)
+                data_sao_paulo = datetime.utcnow() - timedelta(hours=3)
                 supabase.table("cotacoes").insert({
-                    "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                    "data_hora": data_sao_paulo.strftime("%d/%m/%Y %H:%M"),
                     "qtd": len(df_base),
                     "detalhes_json": df_final.fillna(0).to_dict(orient='records')
                 }).execute()
@@ -267,17 +288,14 @@ elif menu == "💰 Comparativo":
                 cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
                 
                 c_btn1, c_btn2 = st.columns(2)
-                # A função to_excel agora cuida de separar a aba Geral e as individuais
                 xlsx_data = to_excel(df_det)
-                c_btn1.download_button(f"📥 Baixar Relatório Detalhado", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
-                if c_btn2.button("🗑️ Excluir Cotação", key=f"del_{t_ref}"):
+                c_btn1.download_button(f"📥 Baixar Relatório Multi-Abas", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
+                if c_btn2.button("🗑️ Remover Registro", key=f"del_{t_ref}"):
                     for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
 
+                # Resumo Simplificado
                 resumo = df_det[cols_totais].sum().reset_index()
                 resumo.columns = ['Transportadora', 'Frete Total']
                 resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
                 st.table(resumo.style.format({'Frete Total': "R$ {:,.2f}"}))
-                
-                nf_col = 'NF' if 'NF' in df_det.columns else df_det.columns[0]
-                st.dataframe(df_det[[nf_col] + cols_totais], use_container_width=True)
