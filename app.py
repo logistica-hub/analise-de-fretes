@@ -59,24 +59,20 @@ if menu == "📊 Dashboard":
 # --- CADASTRO DE TRANSPORTADORA ---
 elif menu == "🚛 Cadastro de Transportadora":
     st.title("🚛 Cadastro de Transportadora")
-    
-    # Garantir que os dados sejam recarregados do banco
     res_t = supabase.table("transportadoras").select("*").execute()
     df_list = pd.DataFrame(res_t.data)
 
     if 'form_reset_key' not in st.session_state: st.session_state.form_reset_key = 0
 
-    # Expander de configuração
-    is_editing = st.session_state.get('edit_id') is not None
-    with st.expander("📝 Configurar Mapeamento", expanded=is_editing):
+    with st.expander("📝 Configurar Mapeamento", expanded=st.session_state.get('edit_id') is not None):
         e_id = st.session_state.get('edit_id')
-        e_row = df_list[df_list['id'] == e_id].iloc[0] if is_editing and not df_list.empty else None
+        e_row = df_list[df_list['id'] == e_id].iloc[0] if e_id is not None and not df_list.empty else None
         
-        nome_t = st.text_input("Nome da Transportadora", value=e_row['nome'] if e_row is not None else "", key=f"nome_{st.session_state.form_reset_key}").upper()
+        nome_t = st.text_input("Nome da Transportadora", value=e_row['nome'] if e_row is not None else "", key=f"n_{st.session_state.form_reset_key}").upper()
         
-        c_file_tab, c_file_abr = st.columns(2)
-        f_tab = c_file_tab.file_uploader("📂 Tabela de Preços", type=["xlsx"], key=f"tab_{st.session_state.form_reset_key}")
-        f_abr = c_file_abr.file_uploader("📂 Relação de Cidades", type=["xlsx"], key=f"abr_{st.session_state.form_reset_key}")
+        c1, c2 = st.columns(2)
+        f_tab = c1.file_uploader("📂 Tabela de Preços", type=["xlsx"], key=f"t_{st.session_state.form_reset_key}")
+        f_abr = c2.file_uploader("📂 Relação de Cidades", type=["xlsx"], key=f"a_{st.session_state.form_reset_key}")
         
         df_t = pd.read_excel(f_tab).fillna(0) if f_tab else (pd.DataFrame(e_row['tabela_json']) if e_row is not None else None)
         df_a = pd.read_excel(f_abr).fillna(0) if f_abr else (pd.DataFrame(e_row['cidades_json']) if e_row is not None else None)
@@ -86,14 +82,13 @@ elif menu == "🚛 Cadastro de Transportadora":
             cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
             cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
             
-            col_map_tab, col_map_abr = st.columns(2)
-            with col_map_tab:
+            cm_tab, cm_abr = st.columns(2)
+            with cm_tab:
                 st.info("Configurações da Tabela")
                 m_tb_sig = st.selectbox("Tabela: Coluna Sigla/Chave", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
                 m_tb_uf = st.selectbox("Tabela: Coluna UF", cols_t, index=cols_t.index(mapa.get('tab_uf')) if mapa.get('tab_uf') in cols_t else 0)
                 col_kg_ex = st.selectbox("Tabela: Preço Kg Adicional", cols_t, index=cols_t.index(mapa.get('kg_extra')) if mapa.get('kg_extra') in cols_t else 0)
-
-            with col_map_abr:
+            with cm_abr:
                 st.info("Configurações da Relação de Cidades")
                 m_ap_cid = st.selectbox("Relação de Cidades: Coluna Cidade", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
                 m_ap_sig = st.selectbox("Relação de Cidades: Coluna Sigla (Match)", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
@@ -102,20 +97,15 @@ elif menu == "🚛 Cadastro de Transportadora":
             n_faixas = st.number_input("Qtd Faixas de Peso", 1, 50, len(mapa.get('faixas', [])) or 6)
             faixas = []
             for i in range(int(n_faixas)):
-                r = st.columns(3)
-                f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
+                r = st.columns(3); f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
                 faixas.append({
-                    "min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"min{i}_{st.session_state.form_reset_key}"),
-                    "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"max{i}_{st.session_state.form_reset_key}"),
-                    "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"col{i}_{st.session_state.form_reset_key}")
+                    "min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}_{st.session_state.form_reset_key}"),
+                    "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}_{st.session_state.form_reset_key}"),
+                    "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}_{st.session_state.form_reset_key}")
                 })
 
             st.write("### 💰 Mapeamento de Taxas")
-            taxas_nomes = [
-                "Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", 
-                "Gris %", "Gris Min", "SEC-CAT", "Suframa", "TRT", "TDA", 
-                "Fluvial %", "Redespacho Fluvial %", "EMEX %", "EMEX Min"
-            ]
+            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "SEC-CAT", "Suframa", "TRT", "TDA", "Fluvial %", "Redespacho Fluvial %", "EMEX %", "EMEX Min"]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
                 v_tx = mapa.get('taxas', {}).get(tx, "Não mapear")
@@ -123,37 +113,18 @@ elif menu == "🚛 Cadastro de Transportadora":
 
             if st.button("💾 Salvar Transportadora"):
                 mapa_final = {"ap_cidade": m_ap_cid, "ap_sigla": m_ap_sig, "tab_sigla": m_tb_sig, "tab_uf": m_tb_uf, "faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_ex}
-                # Converter DFs para listas de dicionários limpando valores nulos
-                tabela_clean = df_t.replace([np.inf, -np.inf], 0).fillna(0).to_dict(orient='records')
-                cidades_clean = df_a.fillna("").to_dict(orient='records')
-                
-                payload = {"nome": nome_t, "tabela_json": tabela_clean, "cidades_json": cidades_clean, "mapeamento_json": mapa_final}
-                
-                if is_editing:
-                    supabase.table("transportadoras").update(payload).eq("id", e_id).execute()
-                else:
-                    supabase.table("transportadoras").insert(payload).execute()
-                
-                st.session_state.edit_id = None
-                st.session_state.form_reset_key += 1
-                st.rerun()
+                payload = {"nome": nome_t, "tabela_json": df_t.replace([np.inf, -np.inf], 0).fillna(0).to_dict(orient='records'), "cidades_json": df_a.fillna("").to_dict(orient='records'), "mapeamento_json": mapa_final}
+                if e_id: supabase.table("transportadoras").update(payload).eq("id", e_id).execute()
+                else: supabase.table("transportadoras").insert(payload).execute()
+                st.session_state.edit_id = None; st.session_state.form_reset_key += 1; st.rerun()
 
-    # Listagem de transportadoras cadastradas
     st.subheader("🚚 Transportadoras Ativas")
-    if not df_list.empty:
-        for _, r in df_list.iterrows():
-            c = st.columns([7, 1, 1])
-            c[0].write(f"**{r['nome']}**")
-            if c[1].button("✏️", key=f"ed{r['id']}"):
-                st.session_state.edit_id = r['id']
-                st.rerun()
-            if c[2].button("🗑️", key=f"dl{r['id']}"):
-                supabase.table("transportadoras").delete().eq("id", r['id']).execute()
-                st.rerun()
-    else:
-        st.info("Nenhuma transportadora cadastrada.")
+    for _, r in df_list.iterrows():
+        c = st.columns([7, 1, 1]); c[0].write(f"**{r['nome']}**")
+        if c[1].button("✏️", key=f"ed{r['id']}"): st.session_state.edit_id = r['id']; st.rerun()
+        if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- COMPARATIVO ---
+# --- COMPARATIVO (CORRIGIDO PARA PLANILHAS DINÂMICAS) ---
 elif menu == "💰 Comparativo":
     st.title("💰 Comparativo Massivo")
     f_notas = st.file_uploader("Subir Notas Fiscais (Excel)", type=["xlsx"])
@@ -167,9 +138,11 @@ elif menu == "💰 Comparativo":
                 df_base = pd.read_excel(f_notas).fillna(0).reset_index(drop=True)
                 df_final = pd.DataFrame(index=df_base.index)
                 df_final['UF'] = "ND"
-                ch_notas = df_base.iloc[:, 2].astype(str).apply(normalizar)
-                pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values
-                valores_notas = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0).values
+                
+                # Identificação dinâmica das colunas da Base Geral
+                ch_notas = df_base.iloc[:, 2].astype(str).apply(normalizar) # CIDADE
+                pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values # PESO
+                valores_notas = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0).values # VALOR NF
 
                 for t_nome in selecionadas:
                     t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
@@ -180,39 +153,46 @@ elif menu == "💰 Comparativo":
                     df_tab_idx = df_tab.set_index(df_tab[m['tab_sigla']].astype(str).apply(normalizar))
                     
                     f_peso = np.zeros(len(df_base))
+                    # 1. Faixas Fixas
                     for f in m['faixas']:
                         if f['col'] in df_tab_idx.columns:
-                            col_vals = sig_match.map(df_tab_idx[f['col']]).fillna(0).values
+                            precos = sig_match.map(df_tab_idx[f['col']]).fillna(0).values
                             mask = (pesos_notas <= f['max']) & (f_peso == 0.0)
-                            f_peso[mask] = col_vals[mask]
+                            f_peso[mask] = precos[mask]
                     
+                    # 2. Peso Adicional (CORREÇÃO VALUERROR)
                     if m.get('kg_extra') in df_tab_idx.columns:
                         u_max, u_col = m['faixas'][-1]['max'], m['faixas'][-1]['col']
                         mask_e = (pesos_notas > u_max)
-                        f_peso[mask_e] = sig_match.map(df_tab_idx[u_col]).fillna(0).values + ((pesos_notas[mask_e]-u_max)*sig_match.map(df_tab_idx[m['kg_extra']]).fillna(0).values)
+                        if mask_e.any():
+                            base_v = sig_match.map(df_tab_idx[u_col]).fillna(0).values
+                            extra_v = sig_match.map(df_tab_idx[m['kg_extra']]).fillna(0).values
+                            f_peso[mask_e] = base_v[mask_e] + ((pesos_notas[mask_e] - u_max) * extra_v[mask_e])
 
                     def gv(n):
                         c = m['taxas'].get(n, "Não mapear")
                         return sig_match.map(df_tab_idx[c]).fillna(0).values if c in df_tab_idx.columns else np.zeros(len(df_base))
 
+                    # Taxas
                     adval = np.maximum(valores_notas * gv("Ad Valorem %"), gv("Ad Valorem Min"))
                     gris = np.maximum(valores_notas * gv("Gris %"), gv("Gris Min"))
                     emex = np.maximum(valores_notas * gv("EMEX %"), gv("EMEX Min"))
-                    
                     ped = np.ceil(pesos_notas/100) * gv("Pedagio")
                     fixas = gv("TAS") + gv("CTRC") + gv("SEC-CAT") + gv("Suframa") + gv("TRT") + gv("TDA")
                     fluv = (valores_notas * gv("Fluvial %")) + (valores_notas * gv("Redespacho Fluvial %"))
                     
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adval + gris + emex + ped + fixas + fluv
-                    if m['tab_uf'] in df_tab_idx.columns: df_final['UF'] = sig_match.map(df_tab_idx[m['tab_uf']]).fillna("ND").values
+                    if m['tab_uf'] in df_tab_idx.columns:
+                        df_final['UF'] = sig_match.map(df_tab_idx[m['tab_uf']]).fillna("ND").values
 
+                # Salvar no Histórico
                 df_save = df_final.replace([np.inf, -np.inf], 0).fillna(0)
                 lista_det = df_save.to_dict(orient='records')
-                data_h, chunk = datetime.now().strftime("%d/%m/%Y %H:%M"), 5000
-                total_global = float(df_save.filter(like='TOTAL_').sum().sum())
+                data_h, total_g = datetime.now().strftime("%d/%m/%Y %H:%M"), float(df_save.filter(like='TOTAL_').sum().sum())
+                chunk = 5000
                 for i in range(0, len(lista_det), chunk):
-                    supabase.table("cotacoes").insert({"data_hora": data_h, "total": total_global, "qtd": len(df_base), "detalhes_json": lista_det[i : i + chunk]}).execute()
-                st.success("Cálculo Finalizado!"); st.rerun()
+                    supabase.table("cotacoes").insert({"data_hora": data_h, "total": total_g, "qtd": len(df_base), "detalhes_json": lista_det[i : i + chunk]}).execute()
+                st.success("Calculado com sucesso!"); st.rerun()
 
     st.divider()
     st.subheader("🕒 Histórico de Cálculos")
@@ -224,6 +204,6 @@ elif menu == "💰 Comparativo":
             for d in g['detalhes_json']: det.extend(d)
             with st.expander(f"📦 {t_ref} | {len(det)} Notas"):
                 st.dataframe(pd.DataFrame(det), use_container_width=True)
-                if st.button("🗑️ Remover Histórico", key=f"del_{t_ref}"):
+                if st.button("🗑️ Remover", key=f"del_{t_ref}"):
                     for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
