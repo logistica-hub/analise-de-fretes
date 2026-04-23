@@ -10,7 +10,7 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS Original preservado
+# CSS Original
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -72,7 +72,7 @@ def to_excel(df_completo):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave Maria")
-    st.info("Versão 21.0")
+    st.info("Versão 22.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -83,7 +83,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("Navegação", ["📊 Dashboard", "📂 Base Comercial", "🚛 Cadastro de Transportadora", "💰 Comparativo"])
 
-# --- DASHBOARD (RESTAURADO COM TODAS AS FUNÇÕES) ---
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     res = supabase.table("cotacoes").select("*").execute()
@@ -114,7 +114,6 @@ if menu == "📊 Dashboard":
             cols_sel = [f"TOTAL_{t}" for t in sel_tr]
             
             if not df_filt.empty and cols_sel:
-                # Indicadores
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), None)
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf else 0
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), None)
@@ -146,16 +145,15 @@ if menu == "📊 Dashboard":
 # --- BASE COMERCIAL ---
 elif menu == "📂 Base Comercial":
     st.title("📂 Base Comercial Fixa")
-    up_base = st.file_uploader("Subir Nova Base de Notas (Excel)", type=["xlsx"])
+    up_base = st.file_uploader("Subir Nova Base (Excel)", type=["xlsx"])
     if up_base:
-        if st.button("💾 Salvar Base no Banco"):
+        if st.button("💾 Salvar Base"):
             df_base_nova = pd.read_excel(up_base).fillna(0)
             supabase.table("base_comercial").delete().neq("id", 0).execute()
             supabase.table("base_comercial").insert({"dados_json": df_base_nova.to_dict(orient='records')}).execute()
-            st.success("Base Comercial salva com sucesso!"); st.rerun()
+            st.success("Base Salva!"); st.rerun()
     res_b = supabase.table("base_comercial").select("id").execute()
     if res_b.data:
-        st.info("✅ Existe uma base carregada.")
         if st.button("🗑️ Excluir Base Atual"):
             supabase.table("base_comercial").delete().neq("id", 0).execute(); st.rerun()
 
@@ -171,12 +169,13 @@ elif menu == "🚛 Cadastro de Transportadora":
         nome_t = st.text_input("Nome", value=e_row['nome'] if e_row is not None else "", key=f"n_{st.session_state.form_reset_key}").upper()
         c1, c2 = st.columns(2)
         f_tab = c1.file_uploader("📂 Tabela de Preços", type=["xlsx"], key=f"t_{st.session_state.form_reset_key}")
-        f_abr = c2.file_uploader("📂 Relação de Cidades (Siglas)", type=["xlsx"], key=f"a_{st.session_state.form_reset_key}")
+        f_abr = c2.file_uploader("📂 Relação de Cidades", type=["xlsx"], key=f"a_{st.session_state.form_reset_key}")
         df_t = pd.read_excel(f_tab).fillna(0) if f_tab else (pd.DataFrame(e_row['tabela_json']) if e_row is not None else None)
         df_a = pd.read_excel(f_abr).fillna(0) if f_abr else (pd.DataFrame(e_row['cidades_json']) if e_row is not None else None)
         if df_t is not None and df_a is not None:
             mapa = e_row['mapeamento_json'] if e_row is not None else {}
-            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]; cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
+            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
+            cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
             cm1, cm2 = st.columns(2)
             with cm1:
                 m_tb_sig = st.selectbox("Sigla (Tabela)", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
@@ -217,36 +216,56 @@ elif menu == "💰 Comparativo":
         df_base = pd.DataFrame(res_base.data[0]['dados_json'])
         st.info(f"Base carregada: {len(df_base)} notas.")
         selecionadas = st.multiselect("Selecione Transportadoras", df_ts['nome'].tolist())
+        
         if selecionadas and st.button("🚀 Calcular"):
-            with st.spinner("Processando..."):
+            with st.spinner("Calculando..."):
                 df_final = df_base.copy()
-                cid_notas = df_base.iloc[:, 2].astype(str).apply(super_limpeza).values
-                pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values
-                valores_notas = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0).values
+                
+                # Identificação Automática de Colunas da Base
+                col_cidade = df_base.columns[2] # Padrão: 3ª coluna
+                col_uf_base = next((c for c in df_base.columns if c.upper() == 'UF'), df_base.columns[3])
+                col_peso_base = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
+                col_valor_base = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
+
+                cid_notas = df_base[col_cidade].astype(str).apply(super_limpeza).values
+                pesos_notas = pd.to_numeric(df_base[col_peso_base], errors='coerce').fillna(0).values
+                valores_notas = pd.to_numeric(df_base[col_valor_base], errors='coerce').fillna(0).values
+
                 for t_nome in selecionadas:
                     t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
                     m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
+                    
                     df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
                     dic_ponte = df_abr.set_index('cid_clean')[m['ap_sigla']].astype(str).apply(super_limpeza).to_dict()
                     siglas_match = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
                     df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza)
                     df_tab_idx = df_tab.set_index('sig_clean')
+
                     def get_v(col):
-                        if col and col != "Não mapear" and col in df_tab_idx.columns: return df_tab_idx[col].reindex(siglas_match).fillna(0).values
+                        if col and col != "Não mapear" and col in df_tab_idx.columns:
+                            return df_tab_idx[col].reindex(siglas_match).fillna(0).values
                         return np.zeros(len(df_base))
+
                     f_peso = np.zeros(len(df_base)); v_kg_adic = np.zeros(len(df_base))
                     for faixa in m['faixas']:
-                        v_f = get_v(faixa['col']); mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0); f_peso[mask] = v_f[mask]
-                    u_max = m['faixas'][-1]['max']; mask_e = (pesos_notas > u_max)
+                        v_f = get_v(faixa['col'])
+                        mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0)
+                        f_peso[mask] = v_f[mask]
+                    
+                    u_max = m['faixas'][-1]['max']
+                    mask_e = (pesos_notas > u_max)
                     if mask_e.any():
                         v_b = get_v(m['faixas'][-1]['col']); v_ex = get_v(m['kg_extra'])
-                        v_kg_adic[mask_e] = (pesos_notas[mask_e] - u_max) * v_ex[mask_e]; f_peso[mask_e] = v_b[mask_e] + v_kg_adic[mask_e]
+                        v_kg_adic[mask_e] = (pesos_notas[mask_e] - u_max) * v_ex[mask_e]
+                        f_peso[mask_e] = v_b[mask_e] + v_kg_adic[mask_e]
+
                     adv = np.maximum(valores_notas * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
                     grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
                     emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
                     ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
                     tas, ctrc = get_v(m['taxas'].get("TAS")), get_v(m['taxas'].get("CTRC"))
                     outros = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
+
                     df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
                     df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
                     df_final[f'ADVAL_{t_nome}'] = adv
@@ -257,18 +276,20 @@ elif menu == "💰 Comparativo":
                     df_final[f'CTRC_{t_nome}'] = ctrc
                     df_final[f'OUTROS_{t_nome}'] = outros
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
-                
-                # Salva cotação (mantendo colunas de UF e Valor para o Dashboard funcionar)
+
+                # Salva Cotação e mostra resultado AQUI (Comparativo)
                 data_sp = datetime.utcnow() - timedelta(hours=3)
-                # Para evitar o erro de tamanho, salvamos apenas as colunas essenciais no histórico
-                cols_dash = ['UF', 'VALOR NF', 'PESO'] + [c for c in df_final.columns if c.startswith("TOTAL_")]
-                # Verifica se as colunas existem (ajuste de nomes caso necessário)
-                cols_presentes = [c for c in cols_dash if c in df_final.columns]
+                cols_dash = [col_uf_base, col_valor_base, col_peso_base] + [c for c in df_final.columns if c.startswith("TOTAL_")]
+                # Renomeia para garantir que o Dashboard encontre 'UF', 'VALOR NF' e 'PESO'
+                df_to_save = df_final[cols_dash].copy()
+                df_to_save.columns = ['UF', 'VALOR NF', 'PESO'] + [c for c in df_to_save.columns if c.startswith("TOTAL_")]
                 
                 supabase.table("cotacoes").insert({
                     "data_hora": data_sp.strftime("%d/%m/%Y %H:%M"),
                     "qtd": len(df_base),
-                    "detalhes_json": df_final[cols_presentes].fillna(0).to_dict(orient='records')
+                    "detalhes_json": df_to_save.fillna(0).to_dict(orient='records')
                 }).execute()
-                st.success("Calculado!"); st.download_button("📥 Baixar Excel", data=to_excel(df_final), file_name="Comparativo.xlsx")
+                
+                st.success("✅ Cálculo finalizado e salvo no histórico!")
+                st.download_button("📥 Baixar Excel Detalhado", data=to_excel(df_final), file_name=f"Comparativo_{data_sp.strftime('%d%m%Y')}.xlsx")
     else: st.warning("Cadastre a Base e as Transportadoras.")
