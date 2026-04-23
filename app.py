@@ -4,6 +4,7 @@ from supabase import create_client
 import numpy as np
 from datetime import datetime
 import unicodedata
+import re
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Sistema de Fretes", layout="wide")
@@ -14,16 +15,19 @@ def init_connection():
 
 supabase = init_connection()
 
-def limpar_texto(txt):
+def super_limpeza(txt):
+    """Limpeza profunda para evitar o erro de 'ND'"""
     if not txt or pd.isna(txt): return ""
-    # Remove acentos, coloca em maiúsculo e remove espaços extras no início e fim
+    # Transforma em string, remove espaços extras nas pontas e internos
     txt = str(txt).strip().upper()
+    txt = re.sub(r'\s+', ' ', txt) 
+    # Remove acentuação
     return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave-Maria Fretes")
-    st.info("Versão de Teste: 14.0")
+    st.info("Versão de Teste: 15.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -83,7 +87,7 @@ elif menu == "🚛 Cadastro de Transportadora":
         
         c1, c2 = st.columns(2)
         f_tab = c1.file_uploader("📂 Tabela de Preços", type=["xlsx"], key=f"t_{st.session_state.form_reset_key}")
-        f_abr = c2.file_uploader("📂 Relação de Cidades (Siglas Manuais)", type=["xlsx"], key=f"a_{st.session_state.form_reset_key}")
+        f_abr = c2.file_uploader("📂 Relação de Cidades (Siglas)", type=["xlsx"], key=f"a_{st.session_state.form_reset_key}")
         
         df_t = pd.read_excel(f_tab).fillna(0) if f_tab else (pd.DataFrame(e_row['tabela_json']) if e_row is not None else None)
         df_a = pd.read_excel(f_abr).fillna(0) if f_abr else (pd.DataFrame(e_row['cidades_json']) if e_row is not None else None)
@@ -98,7 +102,7 @@ elif menu == "🚛 Cadastro de Transportadora":
                 st.markdown("### 📋 Configuração Tabela")
                 m_tb_sig = st.selectbox("Coluna Sigla (na Tabela)", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
                 m_tb_uf = st.selectbox("Coluna UF (na Tabela)", cols_t, index=cols_t.index(mapa.get('tab_uf')) if mapa.get('tab_uf') in cols_t else 0)
-                col_kg_ex = st.selectbox("Coluna Kg Adicional (Excedente)", cols_t, index=cols_t.index(mapa.get('kg_extra')) if mapa.get('kg_extra') in cols_t else 0)
+                col_kg_ex = st.selectbox("Coluna Kg Adicional", cols_t, index=cols_t.index(mapa.get('kg_extra')) if mapa.get('kg_extra') in cols_t else 0)
             with cm2:
                 st.markdown("### 📍 Relação de Cidades")
                 m_ap_cid = st.selectbox("Coluna Cidade (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
@@ -113,7 +117,7 @@ elif menu == "🚛 Cadastro de Transportadora":
                 faixas.append({
                     "min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}"),
                     "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}"),
-                    "col": r[2].selectbox("Coluna Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")
+                    "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")
                 })
 
             st.divider()
@@ -139,19 +143,19 @@ elif menu == "🚛 Cadastro de Transportadora":
 # --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
     st.title("💰 Comparativo Massivo")
-    f_notas = st.file_uploader("Subir Base de Notas (Excel)", type=["xlsx"])
+    f_notas = st.file_uploader("Base de Notas (Excel)", type=["xlsx"])
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
 
     if f_notas and not df_ts.empty:
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
-        if selecionadas and st.button("🚀 Calcular Fretes"):
+        if selecionadas and st.button("🚀 Calcular"):
             with st.spinner("Processando..."):
                 df_base = pd.read_excel(f_notas).fillna(0)
                 df_final = pd.DataFrame(index=df_base.index)
                 
                 # Cidades da Base de Notas
-                cid_notas = df_base.iloc[:, 2].astype(str).apply(limpar_texto).values
+                cid_notas = df_base.iloc[:, 2].astype(str).apply(super_limpeza).values
                 pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values
                 valores_notas = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0).values
 
@@ -162,13 +166,12 @@ elif menu == "💰 Comparativo":
                     df_abr = pd.DataFrame(t_r['cidades_json'])
 
                     # 1. Ponte: Cidade Base -> Sigla Relação
-                    df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(limpar_texto)
-                    dic_ponte = df_abr.set_index('cid_clean')[m['ap_sigla']].astype(str).apply(limpar_texto).to_dict()
-                    
+                    df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
+                    dic_ponte = df_abr.set_index('cid_clean')[m['ap_sigla']].astype(str).apply(super_limpeza).to_dict()
                     siglas_match = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
                     
                     # 2. Tabela de Frete indexada pela Sigla
-                    df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(limpar_texto)
+                    df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza)
                     df_tab_idx = df_tab.set_index('sig_clean')
 
                     def get_v(col):
@@ -176,7 +179,7 @@ elif menu == "💰 Comparativo":
                             return df_tab_idx[col].reindex(siglas_match).fillna(0).values
                         return np.zeros(len(df_base))
 
-                    # 3. Cálculo Frete Peso
+                    # 3. Frete Peso
                     f_peso = np.zeros(len(df_base))
                     for faixa in m['faixas']:
                         v_f = get_v(faixa['col'])
@@ -190,29 +193,25 @@ elif menu == "💰 Comparativo":
                         v_ex = get_v(m['kg_extra'])
                         f_peso[mask_e] = v_b[mask_e] + ((pesos_notas[mask_e] - u_max) * v_ex[mask_e])
 
-                    # 4. Cálculo Taxas Adicionais
+                    # 4. Taxas
                     adv = np.maximum(valores_notas * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
                     grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
                     emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
-                    
                     suframa = valores_notas * get_v(m['taxas'].get("Suframa"))
                     fluvial = valores_notas * get_v(m['taxas'].get("Fluvial"))
                     redesp_flu = get_v(m['taxas'].get("Redespacho Fluvial"))
-                    
                     ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
                     fixas = get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC"))
                     
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + suframa + fluvial + redesp_flu + ped + fixas
                     df_final['UF'] = df_tab_idx[m['tab_uf']].reindex(siglas_match).fillna("ND").values if m['tab_uf'] in df_tab_idx.columns else "ND"
 
-                # Salvar Histórico
-                res_detalhes = df_final.fillna(0).to_dict(orient='records')
                 supabase.table("cotacoes").insert({
                     "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
                     "qtd": len(df_base),
-                    "detalhes_json": res_detalhes
+                    "detalhes_json": df_final.fillna(0).to_dict(orient='records')
                 }).execute()
-                st.success("Cálculo Finalizado!"); st.rerun()
+                st.success("Calculado!"); st.rerun()
 
     st.divider()
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
