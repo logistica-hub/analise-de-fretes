@@ -23,39 +23,39 @@ def super_limpeza(txt):
     txt = re.sub(r'\s+', ' ', txt) 
     return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
 
-def to_excel(df_detalhado, df_original=None):
-    """Gera Excel com aba Geral e abas individuais por transportadora"""
+def to_excel(df_completo):
+    """Gera Excel com múltiplas abas: Geral e Transportadoras"""
     output = BytesIO()
     
-    # Identifica transportadoras pelos prefixos das colunas de TOTAL
-    cols_total = [c for c in df_detalhado.columns if c.startswith("TOTAL_")]
+    # Identifica colunas de cálculo (as que têm prefixos de taxas ou TOTAL_)
+    cols_total = [c for c in df_completo.columns if c.startswith("TOTAL_")]
     transportadoras = [c.replace("TOTAL_", "") for c in cols_total]
+    
+    # Identifica colunas originais (aquelas que NÃO são colunas de cálculo)
+    prefixos_calculo = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "OUTROS_", "TOTAL_"]
+    cols_originais = [c for c in df_completo.columns if not any(c.startswith(p) for p in prefixos_calculo)]
     
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         # --- ABA GERAL ---
-        # Se tivermos a base original, usamos ela e grudamos os Totais no final
-        if df_original is not None:
-            df_geral = df_original.copy()
-            for t in transportadoras:
-                df_geral[f'TOTAL_{t}'] = df_detalhado[f'TOTAL_{t}'].values
-            df_geral.to_excel(writer, index=False, sheet_name='Geral')
-        else:
-            # Caso não haja original (registros antigos), mantém o padrão anterior
-            df_detalhado.to_excel(writer, index=False, sheet_name='Geral')
+        # Colunas originais + Colunas de Total no final
+        df_geral = df_completo[cols_originais + cols_total].copy()
+        df_geral.to_excel(writer, index=False, sheet_name='Geral')
         
         # --- ABAS POR TRANSPORTADORA ---
         for t in transportadoras:
-            # Filtra colunas da transportadora específica
-            cols_t = ['NF'] + [c for c in df_detalhado.columns if c.endswith(f'_{t}')]
-            df_t = df_detalhado[cols_t].copy()
+            # Seleciona colunas originais + cálculos desta transportadora específica
+            cols_calc_t = [c for c in df_completo.columns if c.endswith(f'_{t}')]
+            df_t = df_completo[cols_originais + cols_calc_t].copy()
             
-            # Limpa os nomes das colunas (remove o _NOME_DA_TRANS)
-            df_t.columns = [c.replace(f'_{t}', '') for c in df_t.columns]
+            # Limpa o nome das colunas de cálculo (remove o _NOME_DA_TRANS)
+            df_t.columns = [c.replace(f'_{t}', '') if c.endswith(f'_{t}') else c for c in df_t.columns]
             
-            # Garante que a coluna TOTAL seja a última
-            cols_sem_total = [c for c in df_t.columns if c != 'TOTAL']
-            df_t = df_t[cols_sem_total + ['TOTAL']]
+            # Garante que a coluna TOTAL da aba seja a última
+            if 'TOTAL' in df_t.columns:
+                cols_finais = [c for c in df_t.columns if c != 'TOTAL'] + ['TOTAL']
+                df_t = df_t[cols_finais]
             
+            # Excel limita nome da aba a 31 caracteres
             df_t.to_excel(writer, index=False, sheet_name=t[:31])
             
     return output.getvalue()
@@ -63,7 +63,7 @@ def to_excel(df_detalhado, df_original=None):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave-Maria Fretes")
-    st.info("Versão de Teste: 17.0")
+    st.info("Versão de Teste: 17.1")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -103,8 +103,9 @@ if menu == "📊 Dashboard":
                 m3.metric("Melhor Opção", df_filt[cols_sel].sum().idxmin().replace("TOTAL_", ""))
                 st.divider()
                 st.subheader("📋 Últimas Notas")
-                cols_tela = ['NF'] + cols_sel
-                st.dataframe(df_filt[cols_tela], use_container_width=True)
+                # Tenta pegar 'NF' ou a primeira coluna
+                nf_col = 'NF' if 'NF' in df_filt.columns else df_filt.columns[0]
+                st.dataframe(df_filt[[nf_col] + cols_sel], use_container_width=True)
     else: st.info("Sem dados no histórico.")
 
 # --- CADASTRO ---
@@ -186,8 +187,8 @@ elif menu == "💰 Comparativo":
         if selecionadas and st.button("🚀 Calcular"):
             with st.spinner("Processando..."):
                 df_base = pd.read_excel(f_notas).fillna(0)
-                df_final = pd.DataFrame(index=df_base.index)
-                df_final['NF'] = df_base.iloc[:, 0].values
+                # O df_final agora começa com uma cópia da base para não perdermos nada
+                df_final = df_base.copy()
                 
                 cid_notas = df_base.iloc[:, 2].astype(str).apply(super_limpeza).values
                 pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values
@@ -234,7 +235,7 @@ elif menu == "💰 Comparativo":
                     ctrc = get_v(m['taxas'].get("CTRC"))
                     outros = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                     
-                    # Detalhamento para Exportação
+                    # Detalhamento para Exportação concatenado ao DF
                     df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
                     df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
                     df_final[f'ADVAL_{t_nome}'] = adv
@@ -246,11 +247,11 @@ elif menu == "💰 Comparativo":
                     df_final[f'OUTROS_{t_nome}'] = outros
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
 
+                # Salva o dataframe COMPLETO no banco
                 supabase.table("cotacoes").insert({
                     "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
                     "qtd": len(df_base),
-                    "detalhes_json": df_final.fillna(0).to_dict(orient='records'),
-                    "base_original_json": df_base.to_dict(orient='records') # NOVO: Salva a base para a aba Geral
+                    "detalhes_json": df_final.fillna(0).to_dict(orient='records')
                 }).execute()
                 st.success("Calculado!"); st.rerun()
 
@@ -258,19 +259,17 @@ elif menu == "💰 Comparativo":
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     if res_h.data:
         for t_ref, g in pd.DataFrame(res_h.data).groupby("data_hora", sort=False):
-            # Recupera os dados do primeiro registro do grupo
-            reg = g.iloc[0]
-            df_det = pd.DataFrame(reg['detalhes_json'])
-            # Recupera a base original (se existir no banco)
-            df_orig = pd.DataFrame(reg['base_original_json']) if 'base_original_json' in reg and reg['base_original_json'] else None
+            det = []
+            for d in g['detalhes_json']: det.extend(d)
+            df_det = pd.DataFrame(det)
             
-            with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
+            with st.expander(f"📦 {t_ref} | {len(det)} Notas"):
                 cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
                 
                 c_btn1, c_btn2 = st.columns(2)
-                # Chama o novo to_excel com a base original
-                xlsx_data = to_excel(df_det, df_orig)
-                c_btn1.download_button(f"📥 Baixar Comparativo Multi-Abas", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
+                # A função to_excel agora cuida de separar a aba Geral e as individuais
+                xlsx_data = to_excel(df_det)
+                c_btn1.download_button(f"📥 Baixar Relatório Multi-Abas", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
                 if c_btn2.button("🗑️ Remover Registro", key=f"del_{t_ref}"):
                     for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
@@ -280,4 +279,5 @@ elif menu == "💰 Comparativo":
                 resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
                 st.table(resumo.style.format({'Frete Total': "R$ {:,.2f}"}))
                 
-                st.dataframe(df_det[['NF'] + cols_totais], use_container_width=True)
+                nf_col = 'NF' if 'NF' in df_det.columns else df_det.columns[0]
+                st.dataframe(df_det[[nf_col] + cols_totais], use_container_width=True)
