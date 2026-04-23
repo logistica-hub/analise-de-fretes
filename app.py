@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime
 import unicodedata
 import re
+from io import BytesIO
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Sistema de Fretes", layout="wide")
@@ -18,16 +19,21 @@ supabase = init_connection()
 def super_limpeza(txt):
     """Limpeza profunda para evitar o erro de 'ND'"""
     if not txt or pd.isna(txt): return ""
-    # Transforma em string, remove espaços extras nas pontas e internos
     txt = str(txt).strip().upper()
     txt = re.sub(r'\s+', ' ', txt) 
-    # Remove acentuação
     return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
+
+def to_excel(df):
+    """Converte DataFrame para Excel (XLSX) em memória"""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Cotacao')
+    return output.getvalue()
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave-Maria Fretes")
-    st.info("Versão de Teste: 15.1")
+    st.info("Versão de Teste: 16.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -52,8 +58,7 @@ if menu == "📊 Dashboard":
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
             st.subheader("🎯 Filtros")
-            c_f1, c_f2 = st.columns(2)
-            
+            c_f2 = st.columns(1)[0]
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
             sel_tr = c_f2.multiselect("Transportadoras", nomes_t, default=nomes_t)
@@ -66,10 +71,11 @@ if menu == "📊 Dashboard":
                 m1.metric("Notas Processadas", len(df_filt))
                 m2.metric("Gasto Total", f"R$ {df_filt[cols_sel].sum().sum():,.2f}")
                 m3.metric("Melhor Opção", df_filt[cols_sel].sum().idxmin().replace("TOTAL_", ""))
-                
                 st.divider()
-                st.subheader("📋 Resumo por Nota (NF)")
-                st.dataframe(df_filt, use_container_width=True)
+                st.subheader("📋 Últimas Notas")
+                # Mostra apenas colunas essenciais na tela
+                cols_tela = ['NF'] + cols_sel
+                st.dataframe(df_filt[cols_tela], use_container_width=True)
     else: st.info("Sem dados no histórico.")
 
 # --- CADASTRO ---
@@ -152,11 +158,8 @@ elif menu == "💰 Comparativo":
             with st.spinner("Processando..."):
                 df_base = pd.read_excel(f_notas).fillna(0)
                 df_final = pd.DataFrame(index=df_base.index)
-                
-                # Pegando o número da nota (Coluna 0 da Base)
                 df_final['NF'] = df_base.iloc[:, 0].values
                 
-                # Cidades da Base de Notas (Coluna 2)
                 cid_notas = df_base.iloc[:, 2].astype(str).apply(super_limpeza).values
                 pesos_notas = pd.to_numeric(df_base.iloc[:, 6], errors='coerce').fillna(0).values
                 valores_notas = pd.to_numeric(df_base.iloc[:, 7], errors='coerce').fillna(0).values
@@ -167,12 +170,10 @@ elif menu == "💰 Comparativo":
                     df_tab = pd.DataFrame(t_r['tabela_json'])
                     df_abr = pd.DataFrame(t_r['cidades_json'])
 
-                    # 1. Ponte: Cidade Base -> Sigla Relação
                     df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
                     dic_ponte = df_abr.set_index('cid_clean')[m['ap_sigla']].astype(str).apply(super_limpeza).to_dict()
                     siglas_match = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
                     
-                    # 2. Tabela de Frete indexada pela Sigla
                     df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza)
                     df_tab_idx = df_tab.set_index('sig_clean')
 
@@ -181,7 +182,6 @@ elif menu == "💰 Comparativo":
                             return df_tab_idx[col].reindex(siglas_match).fillna(0).values
                         return np.zeros(len(df_base))
 
-                    # 3. Frete Peso
                     f_peso = np.zeros(len(df_base))
                     for faixa in m['faixas']:
                         v_f = get_v(faixa['col'])
@@ -191,21 +191,25 @@ elif menu == "💰 Comparativo":
                     u_max = m['faixas'][-1]['max']
                     mask_e = (pesos_notas > u_max)
                     if mask_e.any():
-                        v_b = get_v(m['faixas'][-1]['col'])
-                        v_ex = get_v(m['kg_extra'])
+                        v_b = get_v(m['faixas'][-1]['col']); v_ex = get_v(m['kg_extra'])
                         f_peso[mask_e] = v_b[mask_e] + ((pesos_notas[mask_e] - u_max) * v_ex[mask_e])
 
-                    # 4. Taxas
                     adv = np.maximum(valores_notas * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
                     grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
                     emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
-                    suframa = valores_notas * get_v(m['taxas'].get("Suframa"))
-                    fluvial = valores_notas * get_v(m['taxas'].get("Fluvial"))
-                    redesp_flu = get_v(m['taxas'].get("Redespacho Fluvial"))
                     ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
-                    fixas = get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC"))
+                    tas = get_v(m['taxas'].get("TAS"))
+                    ctrc = get_v(m['taxas'].get("CTRC"))
+                    outros = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                     
-                    df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + suframa + fluvial + redesp_flu + ped + fixas
+                    # Detalhamento para a Exportação
+                    df_final[f'PESO_{t_nome}'] = f_peso
+                    df_final[f'ADVAL_{t_nome}'] = adv
+                    df_final[f'GRIS_{t_nome}'] = grs
+                    df_final[f'EMEX_{t_nome}'] = emx
+                    df_final[f'PEDAGIO_{t_nome}'] = ped
+                    df_final[f'TAS_CTRC_{t_nome}'] = tas + ctrc
+                    df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
 
                 supabase.table("cotacoes").insert({
                     "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -222,13 +226,21 @@ elif menu == "💰 Comparativo":
             for d in g['detalhes_json']: det.extend(d)
             df_det = pd.DataFrame(det)
             with st.expander(f"📦 {t_ref} | {len(det)} Notas"):
-                cols_f = [c for c in df_det.columns if c.startswith("TOTAL_")]
-                if cols_f:
-                    resumo = df_det[cols_f].sum().reset_index()
-                    resumo.columns = ['Transportadora', 'Frete Total']
-                    resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
-                    st.table(resumo.style.format({'Frete Total': "R$ {:,.2f}"}))
-                if st.button("🗑️ Remover", key=f"del_{t_ref}"):
+                cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
+                
+                # Botões de Ação
+                c_btn1, c_btn2 = st.columns(2)
+                xlsx_data = to_excel(df_det)
+                c_btn1.download_button(f"📥 Baixar Excel Detalhado", data=xlsx_data, file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
+                if c_btn2.button("🗑️ Remover Registro", key=f"del_{t_ref}"):
                     for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
-                st.dataframe(df_det, use_container_width=True)
+
+                # Tabela Resumida na Tela
+                resumo = df_det[cols_totais].sum().reset_index()
+                resumo.columns = ['Transportadora', 'Frete Total']
+                resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
+                st.table(resumo.style.format({'Frete Total': "R$ {:,.2f}"}))
+                
+                # Preview na tela apenas com NF e Totais
+                st.dataframe(df_det[['NF'] + cols_totais], use_container_width=True)
