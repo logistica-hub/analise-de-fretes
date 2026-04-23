@@ -72,7 +72,7 @@ def to_excel(df_completo):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave Maria")
-    st.info("Versão 18.5")
+    st.info("Versão 19.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -258,8 +258,10 @@ elif menu == "💰 Comparativo":
                     df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + tas + ctrc + outros
                 
                 data_sao_paulo = datetime.utcnow() - timedelta(hours=3)
-                # Salva apenas o necessário para o Dashboard carregar
                 supabase.table("cotacoes").insert({
                     "data_hora": data_sao_paulo.strftime("%d/%m/%Y %H:%M"),
                     "qtd": len(df_base),
-                    "detalhes_json": df_final.fillna(0).to
+                    "detalhes_json": df_final.fillna(0).to_dict(orient='records')
+                }).execute()
+                st.success("Calculado!"); st.download_button("📥 Baixar Excel Detalhado", data=to_excel(df_final), file_name="Comparativo.xlsx")
+    else: st.warning("Cadastre a Base e as Transportadoras.")
