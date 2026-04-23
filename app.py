@@ -54,8 +54,6 @@ if menu == "📊 Dashboard":
             st.subheader("🎯 Filtros")
             c_f1, c_f2 = st.columns(2)
             
-            # Ajuste no filtro para usar NF ao invés de UF se necessário, 
-            # mas mantemos o Dashboard focado em indicadores gerais.
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
             sel_tr = c_f2.multiselect("Transportadoras", nomes_t, default=nomes_t)
