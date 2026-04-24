@@ -158,11 +158,10 @@ with st.sidebar:
     st.divider()
     menu = st.radio("Navegação", ["📊 Dashboard", "📂 Base Comercial", "🚛 Cadastro de Transportadora", "💰 Comparativo", "📜 Histórico"])
 
-# --- DASHBOARD COM FILTROS OTIMIZADOS (ESTILO VERSÃO 18.0) ---
+# --- DASHBOARD COM FILTROS OTIMIZADOS ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     
-    # CSS específico para deixar os filtros (tags) menores e mais discretos
     st.markdown("""
         <style>
         span[data-baseweb="tag"] {
@@ -198,15 +197,11 @@ if menu == "📊 Dashboard":
             
             with st.container():
                 f1, f2, f3 = st.columns([1.5, 2.5, 1.5])
-                
                 sel_tr = f1.multiselect("🚛 Transportadoras", nomes_t, default=nomes_t)
-                
                 col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
                 lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
                 sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
-                
-                # --- MODIFICAÇÃO SOLICITADA: Filtro pela Coluna B (Índice 1) ---
-                col_data = df_total.columns[1] # Força a coluna B (segunda coluna do DataFrame)
+                col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA', 'MES_NF']), None)
                 lista_datas = sorted(df_total[col_data].unique()) if col_data else []
                 sel_data = f3.multiselect("📅 Período", lista_datas, default=lista_datas)
             
@@ -221,7 +216,6 @@ if menu == "📊 Dashboard":
             if not df_filt.empty:
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), 'valor_total_notas')
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
-                
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), 'peso_total')
                 peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
                 
@@ -234,7 +228,6 @@ if menu == "📊 Dashboard":
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
-                
                 qtd_notas = df_filt['qtd'].sum() if 'qtd' in df_filt.columns else len(df_filt)
                 
                 with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{int(qtd_notas)}</div></div>', unsafe_allow_html=True)
@@ -346,15 +339,16 @@ elif menu == "💰 Comparativo":
                 col_uf = next((c for c in df_base.columns if c.upper() == 'UF'), 'UF')
                 col_val_nf = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
                 col_peso = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
-                
-                # Pega a coluna B da base comercial para o resumo
-                col_data_nf = df_base.columns[1] 
+                col_data_nf = next((c for c in df_base.columns if 'DATA' in c.upper() or 'EMISSAO' in c.upper()), None)
                 
                 meses_br = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
                 
                 resumo_final = []
                 for t in selecionadas:
-                    agrupadores = [col_uf, col_data_nf]
+                    agrupadores = [col_uf]
+                    if col_data_nf:
+                        df_calc['__temp_mes'] = pd.to_datetime(df_calc[col_data_nf], errors='coerce').dt.month.map(lambda x: meses_br[int(x)-1] if pd.notna(x) else "Indefinido")
+                        agrupadores.append('__temp_mes')
                     
                     res_uf = df_calc.groupby(agrupadores).agg({col_val_nf: 'sum', col_peso: 'sum', f'TOTAL_{t}': 'sum'}).reset_index()
                     qtd_uf = df_calc.groupby(agrupadores).size().reset_index(name='qtd')
@@ -364,7 +358,7 @@ elif menu == "💰 Comparativo":
                         resumo_final.append({
                             "transportadora": t,
                             "uf": row[col_uf],
-                            "mes_nf": str(row[col_data_nf]), # Salva o valor da coluna B
+                            "mes_nf": row['__temp_mes'] if col_data_nf else meses_br[datetime.now().month-1],
                             "qtd": int(row['qtd']),
                             "valor_total_notas": float(row[col_val_nf]),
                             "peso_total": float(row[col_peso]),
@@ -379,6 +373,7 @@ elif menu == "💰 Comparativo":
                 }).execute()
                 st.success("Cálculo finalizado!")
                 st.rerun()
+    else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
 
 # --- HISTÓRICO ---
 elif menu == "📜 Histórico":
