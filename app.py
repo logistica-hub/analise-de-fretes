@@ -318,7 +318,7 @@ if menu == "📊 Dashboard":
 # --- COTAÇÃO (ANTIGA CALCULADORA RÁPIDA) ---
 elif menu == "🧮 Cotação":
     st.title("🧮 Cotação")
-    st.info("Simule uma cotação rápida. Os dados preenchidos aqui não são salvos no banco de dados.")
+    st.info("Simule uma cotação rápida.")
     
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
