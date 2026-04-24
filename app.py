@@ -194,7 +194,7 @@ with st.sidebar:
     # Menos Principais
     menu_principal = st.radio(
         "Navegação", 
-        ["📊 Dashboard", "🧮 Cotação", "🚛 Cadastro de Transportadora", "💰 Calculo Frete"]
+        ["📊 Dashboard", "🧮 Calculadora Rápida", "🚛 Cadastro de Transportadora", "💰 Comparativo"]
     )
     
     # Espaçador e Divisor para os itens de gerenciamento
@@ -204,7 +204,7 @@ with st.sidebar:
     
     menu_dados = st.radio(
         "Arquivos",
-        ["📂 Base de Notas", "📜 Histórico"],
+        ["📂 Base Comercial", "📜 Histórico"],
         label_visibility="collapsed" # Esconde o texto "Arquivos" para ficar mais limpo
     )
 
@@ -214,7 +214,7 @@ with st.sidebar:
     # garante que o 'menu' final seja o que você clicou por último.
     
     # Pequeno truque: vamos usar uma variável única para o controle principal
-    if menu_dados == "📂 Base de Notas" or menu_dados == "📜 Histórico":
+    if menu_dados == "📂 Base Comercial" or menu_dados == "📜 Histórico":
         # Para evitar conflito de seleção, o ideal é usar um selectbox ou 
         # botões, mas para manter seu código funcionando sem mudar os "ifs",
         # use esta variável única:
@@ -223,7 +223,7 @@ with st.sidebar:
     # Para o seu código não quebrar, use esta definição simples:
     # (Atenção: como são dois Radios separados, o Streamlit trata como inputs independentes)
 
-# --- DASHBOARD (CORRIGIDO) ---
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     
@@ -239,6 +239,9 @@ if menu == "📊 Dashboard":
             color: #475569 !important;
             font-size: 12px !important;
         }
+        span[data-baseweb="tag"] [role="button"] svg {
+            fill: #94a3b8 !important;
+        }
         div[data-testid="column"] {
             padding: 0 10px !important;
         }
@@ -251,7 +254,6 @@ if menu == "📊 Dashboard":
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
             
-            # Identificação das transportadoras disponíveis
             if 'transportadora' in df_total.columns:
                 nomes_t = sorted(df_total['transportadora'].unique())
             else:
@@ -260,12 +262,11 @@ if menu == "📊 Dashboard":
             
             with st.container():
                 f1, f2 = st.columns([2, 2])
-                sel_tr = f1.multiselect("🚛 Transportadoras para Comparativo", nomes_t, default=nomes_t)
+                sel_tr = f1.multiselect("🚛 Transportadoras", nomes_t, default=nomes_t)
                 col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
                 lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
                 sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
             
-            # Filtro de dados
             df_filt = df_total.copy()
             if 'transportadora' in df_filt.columns:
                 df_filt = df_filt[df_filt['transportadora'].isin(sel_tr)]
@@ -273,29 +274,10 @@ if menu == "📊 Dashboard":
                 df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
             
             if not df_filt.empty:
-                # --- LÓGICA DE DESDUPLICAÇÃO PARA MÉTRICAS LIMPAS ---
-                # Criamos um DF que ignora a transportadora para contar a base real
-                cols_para_id_nota = [col_uf, 'mes_nf', 'valor_total_notas', 'peso_total', 'qtd']
-                cols_existentes = [c for c in cols_para_id_nota if c in df_filt.columns]
-                
-                # Remove duplicatas para ter o número real de notas processadas
-                df_unique_notas = df_filt.drop_duplicates(subset=cols_existentes)
-
-                # 1. Notas Processadas (Baseado na coluna 'qtd' se existir, senão count)
-                if 'qtd' in df_unique_notas.columns:
-                    qtd_notas = df_unique_notas['qtd'].sum()
-                else:
-                    qtd_notas = len(df_unique_notas)
-
-                # 2. Valor Total das Notas
-                col_val_nf = next((c for c in df_unique_notas.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), 'valor_total_notas')
-                val_total_notas = df_unique_notas[col_val_nf].sum() if col_val_nf in df_unique_notas.columns else 0
-
-                # 3. Peso Total
-                col_peso = next((c for c in df_unique_notas.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), 'peso_total')
-                peso_total = df_unique_notas[col_peso].sum() if col_peso in df_unique_notas.columns else 0
-
-                # 4. Investimento em Frete (Este deve somar o selecionado)
+                col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), 'valor_total_notas')
+                val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
+                col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), 'peso_total')
+                peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
                 col_frete = next((c for c in df_filt.columns if 'VALOR_TOTAL_FRETE' in c.upper()), None)
                 if col_frete:
                     val_total_frete = df_filt[col_frete].sum()
@@ -303,16 +285,15 @@ if menu == "📊 Dashboard":
                     cols_sel = [f"TOTAL_{t}" for t in sel_tr if f"TOTAL_{t}" in df_filt.columns]
                     val_total_frete = df_filt[cols_sel].sum().sum() if cols_sel else 0
                 
-                # Renderização dos Cards
                 st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
+                qtd_notas = df_filt['qtd'].sum() if 'qtd' in df_filt.columns else len(df_filt)
                 
-                with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS (UN)</div><div class="metric-value">{int(qtd_notas)}</div></div>', unsafe_allow_html=True)
-                with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">VALOR TOTAL MERCADORIA</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
-                with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">PESO TOTAL BRUTO</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
+                with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{int(qtd_notas)}</div></div>', unsafe_allow_html=True)
+                with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
+                with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">PESO TOTAL</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
                 with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">INVESTIMENTO EM FRETE</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
                 
-                # ... (resto do código do Pivot Table permanece igual)
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.subheader("💰 Melhor Custo por Estado")
                 if col_uf:
@@ -330,9 +311,10 @@ if menu == "📊 Dashboard":
                     
                     st.dataframe(df_pivot.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
     else: st.info("Sem histórico de cotações para exibir.")
+
 # --- CALCULADORA RÁPIDA ---
-elif menu == "🧮 Cotação de Frete":
-    st.title("🧮 Cotação de Frete")
+elif menu == "🧮 Calculadora Rápida":
+    st.title("🧮 Calculadora de Frete Unitário")
     st.info("Simule uma cotação rápida. Os dados preenchidos aqui não são salvos no banco de dados.")
     
     # Busca as transportadoras cadastradas para o usuário escolher
@@ -405,8 +387,8 @@ elif menu == "🧮 Cotação de Frete":
                         st.error(f"Erro ao calcular: {e}")
 
 # --- BASE COMERCIAL ---
-elif menu == "📂 Base de Notas":
-    st.title("📂 Gestão da Base Notas")
+elif menu == "📂 Base Comercial":
+    st.title("📂 Gestão da Base Comercial")
     up_base = st.file_uploader("Subir Base de Notas (Excel)", type=["xlsx"])
     if up_base:
         if st.button("💾 Salvar Base no Sistema"):
@@ -474,7 +456,7 @@ elif menu == "🚛 Cadastro de Transportadora":
             if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
 # --- COMPARATIVO ---
-elif menu == "💰 Calculo de Frete":
+elif menu == "💰 Comparativo":
     st.title("💰 Cotação de Fretes")
     res_base = supabase.table("base_comercial").select("*").execute()
     res_t = supabase.table("transportadoras").select("*").execute()
