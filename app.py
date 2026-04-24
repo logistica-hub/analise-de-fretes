@@ -237,82 +237,74 @@ with st.sidebar:
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     
+    # Estilização CSS das Tags e Cards
     st.markdown("""
         <style>
-        span[data-baseweb="tag"] {
-            background-color: #f1f5f9 !important;
-            border: 1px solid #e2e8f0 !important;
-            border-radius: 6px !important;
-            padding: 2px 8px !important;
-        }
-        span[data-baseweb="tag"] span {
-            color: #475569 !important;
-            font-size: 12px !important;
-        }
-        span[data-baseweb="tag"] [role="button"] svg {
-            fill: #94a3b8 !important;
-        }
-        div[data-testid="column"] {
-            padding: 0 10px !important;
-        }
+        span[data-baseweb="tag"] { background-color: #f1f5f9 !important; border: 1px solid #e2e8f0 !important; border-radius: 6px !important; padding: 2px 8px !important; }
+        span[data-baseweb="tag"] span { color: #475569 !important; font-size: 12px !important; }
+        div[data-testid="column"] { padding: 0 10px !important; }
         </style>
     """, unsafe_allow_html=True)
 
     res = supabase.table("cotacoes").select("*").execute()
     if res.data:
-        all_dfs = [pd.DataFrame(r['detalhes_json']) for r in res.data if r['detalhes_json']]
+        df_historico_base = pd.DataFrame(res.data)
+        
+        # Extraímos os detalhes e vinculamos ao ID da cotação
+        all_dfs = []
+        for _, r in df_historico_base.iterrows():
+            if r['detalhes_json']:
+                temp_df = pd.DataFrame(r['detalhes_json'])
+                temp_df['id_referencia'] = r['id']  # ID único da linha no banco
+                all_dfs.append(temp_df)
+
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
             
-            if 'transportadora' in df_total.columns:
-                nomes_t = sorted(df_total['transportadora'].unique())
-            else:
-                cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
-                nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
-            
+            # Filtros de interface
+            nomes_t = sorted(df_total['transportadora'].unique()) if 'transportadora' in df_total.columns else []
+            col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
+            lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
+
             with st.container():
                 f1, f2 = st.columns([2, 2])
                 sel_tr = f1.multiselect("🚛 Transportadoras", nomes_t, default=nomes_t)
-                col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
-                lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
                 sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
             
+            # Aplicando filtros
             df_filt = df_total.copy()
-            if 'transportadora' in df_filt.columns:
+            if sel_tr:
                 df_filt = df_filt[df_filt['transportadora'].isin(sel_tr)]
-            if col_uf: 
+            if col_uf and sel_uf:
                 df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
             
             if not df_filt.empty:
-                col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), 'valor_total_notas')
-                val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
-                col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), 'peso_total')
-                peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
-                col_frete = next((c for c in df_filt.columns if 'VALOR_TOTAL_FRETE' in c.upper()), None)
-                if col_frete:
-                    val_total_frete = df_filt[col_frete].sum()
-                else:
-                    cols_sel = [f"TOTAL_{t}" for t in sel_tr if f"TOTAL_{t}" in df_filt.columns]
-                    val_total_frete = df_filt[cols_sel].sum().sum() if cols_sel else 0
+                # --- LÓGICA ANTI-MULTIPLICAÇÃO ---
+                # Criamos um dataframe "único" por cotação e UF para métricas de Nota/Peso/Valor
+                # Isso impede que o valor triplique se você comparou 3 transportadoras
+                df_unicos = df_filt.drop_duplicates(subset=['id_referencia', 'uf', 'mes_nf'])
+
+                qtd_notas = df_unicos['qtd'].sum()
+                val_total_notas = df_unicos['valor_total_notas'].sum()
+                peso_total = df_unicos['peso_total'].sum()
                 
+                # O Frete nós somamos TUDO (pois é o acumulado de todas as transportadoras filtradas)
+                val_total_frete = df_filt['valor_total_frete'].sum()
+                
+                # Exibição dos Cards
                 st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
-                qtd_notas = df_filt['qtd'].sum() if 'qtd' in df_filt.columns else len(df_filt)
                 
                 with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{int(qtd_notas)}</div></div>', unsafe_allow_html=True)
                 with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
                 with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">PESO TOTAL</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
                 with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">INVESTIMENTO EM FRETE</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
                 
+                # Tabela Comparativa
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.subheader("💰 Melhor Custo por Estado")
                 if col_uf:
-                    if 'transportadora' in df_filt.columns:
-                        df_pivot = df_filt.pivot_table(index=col_uf, columns='transportadora', values='valor_total_frete', aggfunc='sum').fillna(0)
-                    else:
-                        cols_sel = [f"TOTAL_{t}" for t in sel_tr if f"TOTAL_{t}" in df_filt.columns]
-                        df_pivot = df_filt.groupby(col_uf)[cols_sel].sum()
-                        df_pivot.columns = [c.replace("TOTAL_", "") for c in df_pivot.columns]
+                    df_pivot = df_filt.pivot_table(index=col_uf, columns='transportadora', values='valor_total_frete', aggfunc='sum').fillna(0)
                     
                     def highlight_min_no_zero(s):
                         s_validos = s[s > 0]
@@ -320,7 +312,8 @@ if menu == "📊 Dashboard":
                         return ['background-color: #ecfdf5; color: #065f46; font-weight: bold; border: 1px solid #10b981' if v else 'color: #475569' for v in is_min]
                     
                     st.dataframe(df_pivot.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
-    else: st.info("Sem histórico de cotações para exibir.")
+    else: 
+        st.info("Sem histórico de cotações para exibir.")
 
 # --- COTAÇÃO (ANTIGA CALCULADORA RÁPIDA) ---
 elif menu == "🧮 Cotação":
