@@ -415,7 +415,7 @@ elif menu == "🧮 Cotação":
                                                 detalhes_exibir.append(f"<div style='font-size: 0.8rem; color: #475569;'>{label}: {format_brl(v)}</div>")
 
                                 if detalhes_exibir:
-                                    with st.expander(f"🔍 Detalhes - {t_nome}"):
+                                    with st.expander(f"🔍 Taxas - {t_nome}"):
                                         for linha in detalhes_exibir:
                                             st.markdown(linha, unsafe_allow_html=True)
                                         st.markdown(f"<hr style='margin: 5px 0;'><b style='font-size: 0.85rem;'>Final: {format_brl(item['total'])}</b>", unsafe_allow_html=True)
