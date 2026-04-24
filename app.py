@@ -52,6 +52,7 @@ def init_connection():
 
 supabase = init_connection()
 
+# --- ALTERAÇÃO DAS CASAS DECIMAIS ---
 def format_brl(val):
     if pd.isna(val) or val == 0: return "R$ 0,00"
     return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -59,6 +60,7 @@ def format_brl(val):
 def format_kg(val):
     if pd.isna(val) or val == 0: return "0,000 kg"
     return f"{val:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".") + " kg"
+# ------------------------------------
 
 def super_limpeza(txt):
     if not txt or pd.isna(txt): return ""
@@ -172,11 +174,10 @@ def to_excel(df_completo):
             df_t.to_excel(writer, index=False, sheet_name=t[:31])
     return output.getvalue()
 
-# --- SIDEBAR ATUALIZADA ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave Maria")
     
-    # --- LOGO (Mantido conforme seu código) ---
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
@@ -192,30 +193,16 @@ with st.sidebar:
     
     st.divider()
 
-    # --- HACK PARA REMOVER A BOLINHA DO SEPARADOR ---
     st.markdown("""
         <style>
-            /* Esconde a bolinha (radio) e o texto do 5º item (o "---") */
-            [data-testid="stSidebarNav"] div[role="radiogroup"] > div:nth-child(5) label {
-                display: none !important;
-            }
-            /* Cria o risco no lugar do 5º item */
+            [data-testid="stSidebarNav"] div[role="radiogroup"] > div:nth-child(5) label { display: none !important; }
             [data-testid="stSidebarNav"] div[role="radiogroup"] > div:nth-child(5)::before {
-                content: "";
-                display: block;
-                height: 1px;
-                background-color: #4B4B4B;
-                margin: 10px 0;
-                width: 100%;
+                content: ""; display: block; height: 1px; background-color: #4B4B4B; margin: 10px 0; width: 100%;
             }
-            /* Impede que o mouse clique na linha */
-            [data-testid="stSidebarNav"] div[role="radiogroup"] > div:nth-child(5) {
-                pointer-events: none !important;
-            }
+            [data-testid="stSidebarNav"] div[role="radiogroup"] > div:nth-child(5) { pointer-events: none !important; }
         </style>
     """, unsafe_allow_html=True)
 
-    # Sua lista original
     menu_opcoes = [
         "📊 Dashboard", 
         "🧮 Cotação", 
@@ -226,18 +213,12 @@ with st.sidebar:
     ]
     
     escolha = st.radio("Navegação", menu_opcoes)
-    
-    # Lógica para evitar erro se "---" for selecionado (embora o clique esteja bloqueado)
-    if escolha == "---":
-        menu = "📊 Dashboard"
-    else:
-        menu = escolha
+    menu = escolha
         
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     
-    # Estilização CSS das Tags e Cards
     st.markdown("""
         <style>
         span[data-baseweb="tag"] { background-color: #f1f5f9 !important; border: 1px solid #e2e8f0 !important; border-radius: 6px !important; padding: 2px 8px !important; }
@@ -250,18 +231,15 @@ if menu == "📊 Dashboard":
     if res.data:
         df_historico_base = pd.DataFrame(res.data)
         
-        # Extraímos os detalhes e vinculamos ao ID da cotação
         all_dfs = []
         for _, r in df_historico_base.iterrows():
             if r['detalhes_json']:
                 temp_df = pd.DataFrame(r['detalhes_json'])
-                temp_df['id_referencia'] = r['id']  # ID único da linha no banco
+                temp_df['id_referencia'] = r['id']
                 all_dfs.append(temp_df)
 
         if all_dfs:
             df_total = pd.concat(all_dfs, ignore_index=True)
-            
-            # Filtros de interface
             nomes_t = sorted(df_total['transportadora'].unique()) if 'transportadora' in df_total.columns else []
             col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
             lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
@@ -271,58 +249,41 @@ if menu == "📊 Dashboard":
                 sel_tr = f1.multiselect("🚛 Transportadoras", nomes_t, default=nomes_t)
                 sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
             
-            # Aplicando filtros
             df_filt = df_total.copy()
-            if sel_tr:
-                df_filt = df_filt[df_filt['transportadora'].isin(sel_tr)]
-            if col_uf and sel_uf:
-                df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
+            if sel_tr: df_filt = df_filt[df_filt['transportadora'].isin(sel_tr)]
+            if col_uf and sel_uf: df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
             
             if not df_filt.empty:
-                # --- LÓGICA ANTI-MULTIPLICAÇÃO ---
-                # Criamos um dataframe "único" por cotação e UF para métricas de Nota/Peso/Valor
-                # Isso impede que o valor triplique se você comparou 3 transportadoras
                 df_unicos = df_filt.drop_duplicates(subset=['id_referencia', 'uf', 'mes_nf'])
-
                 qtd_notas = df_unicos['qtd'].sum()
                 val_total_notas = df_unicos['valor_total_notas'].sum()
                 peso_total = df_unicos['peso_total'].sum()
-                
-                # O Frete nós somamos TUDO (pois é o acumulado de todas as transportadoras filtradas)
                 val_total_frete = df_filt['valor_total_frete'].sum()
                 
-                # Exibição dos Cards
                 st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
-                
                 with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{int(qtd_notas)}</div></div>', unsafe_allow_html=True)
                 with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
                 with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">PESO TOTAL</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
                 with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">INVESTIMENTO EM FRETE</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
                 
-                # Tabela Comparativa
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.subheader("💰 Melhor Custo por Estado")
                 if col_uf:
                     df_pivot = df_filt.pivot_table(index=col_uf, columns='transportadora', values='valor_total_frete', aggfunc='sum').fillna(0)
-                    
                     def highlight_min_no_zero(s):
                         s_validos = s[s > 0]
                         is_min = s == s_validos.min() if not s_validos.empty else [False]*len(s)
                         return ['background-color: #ecfdf5; color: #065f46; font-weight: bold; border: 1px solid #10b981' if v else 'color: #475569' for v in is_min]
-                    
                     st.dataframe(df_pivot.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
     else: 
         st.info("Sem histórico de cotações para exibir.")
 
-# --- COTAÇÃO (ANTIGA CALCULADORA RÁPIDA) ---
+# --- COTAÇÃO ---
 elif menu == "🧮 Cotação":
     st.title("🧮 Cotação")
-    st.info("Simule uma cotação rápida.")
-    
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
-
     if df_ts.empty:
         st.warning("Nenhuma transportadora cadastrada.")
     else:
@@ -334,7 +295,6 @@ elif menu == "🧮 Cotação":
             with col2:
                 uf_input = st.selectbox("UF", ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"], index=18)
                 valor_input = st.number_input("Valor da Nota (R$)", min_value=0.0, value=0.0, step=100.0)
-            
             transp_selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
             submit = st.form_submit_button("🚀 Calcular Frete")
 
@@ -343,80 +303,46 @@ elif menu == "🧮 Cotação":
                 st.error("Preencha os campos obrigatórios.")
             else:
                 df_simulado = pd.DataFrame([{"CIDADE": cid_input, "UF": uf_input, "PESO": peso_input, "VALOR": valor_input}])
-
                 with st.spinner("Calculando..."):
                     try:
                         res_calc = engine_calculo(df_simulado, transp_selecionadas, df_ts)
                         st.subheader("🏁 Comparativo de Preços")
-                        
                         ranking = []
                         for t in transp_selecionadas:
                             col_total = f'TOTAL_{t}'
                             if col_total in res_calc.columns:
                                 valor_total = res_calc[col_total].iloc[0]
                                 ranking.append({"transp": t, "total": valor_total})
-                        
                         ranking = sorted(ranking, key=lambda x: x['total'] if x['total'] > 0 else 999999)
-
-                        # MAPEAMENTO CORRIGIDO PARA BATER COM SUA ENGINE_CALCULO
-                        mapeamento_taxas = {
-                            "PESO_BASE": "Frete Peso",
-                            "KG_ADIC": "KG Adicional",
-                            "ADVAL": "Ad Valorem",
-                            "GRIS": "Gris",
-                            "EMEX": "Emex",
-                            "PEDAGIO": "Pedágio",
-                            "TAS": "TAS",
-                            "CTRC": "CTRC",
-                            "SUFRAMA": "Suframa",
-                            "SEC_CAT": "SEC-CAT",
-                            "FLUVIAL": "Fluvial",
-                            "REDESPACHO_F": "Redespacho Fluv.",
-                            "TDA": "TDA",
-                            "DESPACHO": "Despacho",
-                            "TRT": "TRT"
-                        }
+                        
+                        mapeamento_taxas = {"PESO_BASE": "Frete Peso", "KG_ADIC": "KG Adicional", "ADVAL": "Ad Valorem", "GRIS": "Gris", "EMEX": "Emex", "PEDAGIO": "Pedágio", "TAS": "TAS", "CTRC": "CTRC", "SUFRAMA": "Suframa", "SEC_CAT": "SEC-CAT", "FLUVIAL": "Fluvial", "REDESPACHO_F": "Redespacho Fluv.", "TDA": "TDA", "DESPACHO": "Despacho", "TRT": "TRT"}
 
                         for item in ranking:
                             t_nome = item['transp']
                             if item['total'] > 0:
-                                # CARD VISUAL COMPACTO (Margens e Fontes menores)
                                 st.markdown(f"""
                                 <div style="background-color: #ffffff; padding: 8px 15px; border-radius: 8px; border-left: 4px solid #10b981; margin-bottom: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
-                                    <div>
-                                        <span style="color: #64748b; font-size: 0.65rem; font-weight: bold; text-transform: uppercase;">Transportadora</span><br>
-                                        <b style="font-size: 0.9rem; color: #1e293b;">{t_nome}</b>
-                                    </div>
-                                    <div style="text-align: right;">
-                                        <span style="color: #64748b; font-size: 0.65rem; font-weight: bold; text-transform: uppercase;">Total</span><br>
-                                        <b style="font-size: 1.1rem; color: #059669;">{format_brl(item['total'])}</b>
-                                    </div>
+                                    <div><span style="color: #64748b; font-size: 0.65rem; font-weight: bold; text-transform: uppercase;">Transportadora</span><br><b style="font-size: 0.9rem; color: #1e293b;">{t_nome}</b></div>
+                                    <div style="text-align: right;"><span style="color: #64748b; font-size: 0.65rem; font-weight: bold; text-transform: uppercase;">Total</span><br><b style="font-size: 1.1rem; color: #059669;">{format_brl(item['total'])}</b></div>
                                 </div>
                                 """, unsafe_allow_html=True)
-
-                                # DETALHAMENTO EM TEXTO REDUZIDO
+                                
                                 detalhes_exibir = []
                                 for col_key, label in mapeamento_taxas.items():
                                     col_full = f"{col_key}_{t_nome}"
                                     if col_full in res_calc.columns:
                                         v = res_calc[col_full].iloc[0]
                                         if v > 0:
-                                            # Destaque para Frete Peso e Adicional
                                             if col_key in ["PESO_BASE", "KG_ADIC"]:
                                                 detalhes_exibir.append(f"<div style='font-size: 0.85rem; color: #1e293b;'><b>{label}: {format_brl(v)}</b></div>")
                                             else:
                                                 detalhes_exibir.append(f"<div style='font-size: 0.8rem; color: #475569;'>{label}: {format_brl(v)}</div>")
-
                                 if detalhes_exibir:
                                     with st.expander(f"🔍 Taxas - {t_nome}"):
-                                        for linha in detalhes_exibir:
-                                            st.markdown(linha, unsafe_allow_html=True)
+                                        for linha in detalhes_exibir: st.markdown(linha, unsafe_allow_html=True)
                                         st.markdown(f"<hr style='margin: 5px 0;'><b style='font-size: 0.85rem;'>Final: {format_brl(item['total'])}</b>", unsafe_allow_html=True)
-                            else:
-                                st.warning(f"🚫 {t_nome}: Sem atendimento.")
-                                    
-                    except Exception as e:
-                        st.error(f"Erro no cálculo: {e}")
+                            else: st.warning(f"🚫 {t_nome}: Sem atendimento.")
+                    except Exception as e: st.error(f"Erro no cálculo: {e}")
 
 # --- BASE DE NOTAS ---
 elif menu == "📂 Base de Notas":
@@ -446,7 +372,7 @@ elif menu == "🚛 Cadastro de Transportadora":
         nome_t = st.text_input("Nome", value=e_row['nome'] if e_row is not None else "", key=f"n_{st.session_state.form_reset_key}").upper()
         c1, c2 = st.columns(2)
         f_tab = c1.file_uploader("📂 Tabela de Preços", type=["xlsx"], key=f"t_{st.session_state.form_reset_key}")
-        f_abr = c2.file_uploader("📂 Relação de Cidades (Siglas)", type=["xlsx"], key=f"a_{st.session_state.form_reset_key}")
+        f_abr = c2.file_uploader("📂 Relação de Cidades", type=["xlsx"], key=f"a_{st.session_state.form_reset_key}")
         df_t = pd.read_excel(f_tab).fillna(0) if f_tab else (pd.DataFrame(e_row['tabela_json']) if e_row is not None else None)
         df_a = pd.read_excel(f_abr).fillna(0) if f_abr else (pd.DataFrame(e_row['cidades_json']) if e_row is not None else None)
         if df_t is not None and df_a is not None:
@@ -455,22 +381,18 @@ elif menu == "🚛 Cadastro de Transportadora":
             cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
             cm1, cm2 = st.columns(2)
             with cm1:
-                st.markdown("### 📋 Configuração Tabela")
-                m_tb_sig = st.selectbox("Coluna Sigla (na Tabela)", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
-                m_tb_uf = st.selectbox("Coluna UF (na Tabela)", cols_t, index=cols_t.index(mapa.get('tab_uf')) if mapa.get('tab_uf') in cols_t else 0)
+                m_tb_sig = st.selectbox("Coluna Sigla (Tabela)", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
+                m_tb_uf = st.selectbox("Coluna UF (Tabela)", cols_t, index=cols_t.index(mapa.get('tab_uf')) if mapa.get('tab_uf') in cols_t else 0)
                 col_kg_ex = st.selectbox("Coluna Kg Adicional", cols_t, index=cols_t.index(mapa.get('kg_extra')) if mapa.get('kg_extra') in cols_t else 0)
             with cm2:
-                st.markdown("### 📍 Relação de Cidades")
-                m_ap_cid = st.selectbox("Coluna Cidade (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
-                m_ap_uf = st.selectbox("Coluna UF (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_uf')) if mapa.get('ap_uf') in cols_a else 0)
-                m_ap_sig = st.selectbox("Coluna Sigla (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
-            st.divider(); st.markdown("### ⚖️ Mapeamento de Faixas de Peso")
+                m_ap_cid = st.selectbox("Coluna Cidade (Relação)", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
+                m_ap_uf = st.selectbox("Coluna UF (Relação)", cols_a, index=cols_a.index(mapa.get('ap_uf')) if mapa.get('ap_uf') in cols_a else 0)
+                m_ap_sig = st.selectbox("Coluna Sigla (Relação)", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
             n_f = st.number_input("Qtd Faixas de Peso", 1, 50, len(mapa.get('faixas', [])) or 6)
             faixas = []
             for i in range(int(n_f)):
                 r = st.columns(3); f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
-                faixas.append({"min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")})
-            st.divider(); st.markdown("### 💰 Mapeamento de Taxas Adicionais")
+                faixas.append({"min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox("Coluna", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")})
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "SEC-CAT", "Fluvial", "Redespacho Fluvial", "TDA %", "TDA Min", "Despacho", "TRT %"]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
@@ -495,17 +417,16 @@ elif menu == "💰 Calculo de Comparativo":
     df_ts = pd.DataFrame(res_t.data)
     if res_base.data and not df_ts.empty:
         df_base = pd.DataFrame(res_base.data[0]['dados_json'])
-        st.info(f"Utilizando Base de Notas salva: {len(df_base)} notas.")
+        st.info(f"Utilizando Base de Notas: {len(df_base)} notas.")
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
-            with st.spinner("Processando indicadores..."):
+            with st.spinner("Processando..."):
                 df_calc = engine_calculo(df_base, selecionadas, df_ts)
                 data_sp = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M")
                 col_uf = next((c for c in df_base.columns if c.upper() == 'UF'), 'UF')
                 col_val_nf = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
                 col_peso = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
                 col_data_nf = next((c for c in df_base.columns if 'DATA' in c.upper() or 'EMISSAO' in c.upper()), None)
-                
                 meses_br = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
                 resumo_final = []
                 for t in selecionadas:
@@ -513,54 +434,37 @@ elif menu == "💰 Calculo de Comparativo":
                     if col_data_nf:
                         df_calc['__temp_mes'] = pd.to_datetime(df_calc[col_data_nf], errors='coerce').dt.month.map(lambda x: meses_br[int(x)-1] if pd.notna(x) else "Indefinido")
                         agrupadores.append('__temp_mes')
-                    
                     res_uf = df_calc.groupby(agrupadores).agg({col_val_nf: 'sum', col_peso: 'sum', f'TOTAL_{t}': 'sum'}).reset_index()
                     qtd_uf = df_calc.groupby(agrupadores).size().reset_index(name='qtd')
                     res_uf = res_uf.merge(qtd_uf, on=agrupadores)
-                    
                     for _, row in res_uf.iterrows():
                         resumo_final.append({
-                            "transportadora": t,
-                            "uf": row[col_uf],
-                            "mes_nf": row['__temp_mes'] if col_data_nf else meses_br[datetime.now().month-1],
-                            "qtd": int(row['qtd']),
-                            "valor_total_notas": float(row[col_val_nf]),
-                            "peso_total": float(row[col_peso]),
-                            "valor_total_frete": float(row[f'TOTAL_{t}']),
-                            "lista_t": selecionadas
+                            "transportadora": t, "uf": row[col_uf], "mes_nf": row['__temp_mes'] if col_data_nf else meses_br[datetime.now().month-1],
+                            "qtd": int(row['qtd']), "valor_total_notas": float(row[col_val_nf]), "peso_total": float(row[col_peso]),
+                            "valor_total_frete": float(row[f'TOTAL_{t}']), "lista_t": selecionadas
                         })
-                
                 supabase.table("cotacoes").insert({"data_hora": data_sp, "qtd": len(df_base), "detalhes_json": resumo_final}).execute()
                 st.success("Cálculo finalizado!"); st.rerun()
     else: st.warning("Cadastre a Base de Notas e as Transportadoras.")
 
-# --- HISTORICO DE COMPARATIVOS ---
+# --- HISTORICO ---
 elif menu == "📜 Historico de Comparativos":
     st.title("📜 Historico de Comparativos")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
-    
     if res_h.data:
         for r in res_h.data:
-            dt = r['data_hora']
-            detalhes = r['detalhes_json']
-            total_frete_h = sum(item['valor_total_frete'] for item in detalhes)
-            qtd_total_h = r['qtd']
-            
-            with st.expander(f"📅 {dt}  |  📦 {qtd_total_h} Notas  |  💰 {format_brl(total_frete_h)}"):
-                df_h = pd.DataFrame(detalhes)
+            with st.expander(f"📅 {r['data_hora']}  |  📦 {r['qtd']} Notas"):
+                df_h = pd.DataFrame(r['detalhes_json'])
                 consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
-                
-                st.markdown("### Consolidado por Transportadora")
                 for _, row_t in consolidado_t.iterrows():
                     st.write(f"**{row_t['transportadora']}**: {format_brl(row_t['valor_total_frete'])}")
-                
                 st.divider()
-                c1, c2 = st.columns([3, 1])
-                
-                if c1.button("🛠️ Preparar Download Detalhado", key=f"prep_{r['id']}"):
-                    with st.spinner("Processando base completa para exportação..."):
-                        res_b = supabase.table("base_comercial").select("*").execute()
-                        if res_b.data:
-                            df_base_exp = pd.DataFrame(res_b.data[0]['dados_json'])
-                            t_usadas = df_h['lista_t'].iloc[0]
-                            res_t_exp = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
+                if st.button("🛠️ Download Detalhado", key=f"p_{r['id']}"):
+                    res_b = supabase.table("base_comercial").select("*").execute()
+                    if res_b.data:
+                        df_base_exp = pd.DataFrame(res_b.data[0]['dados_json'])
+                        t_usadas = df_h['lista_t'].iloc[0]
+                        res_t_exp = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
+                        df_ts_exp = pd.DataFrame(res_t_exp.data)
+                        df_final_exp = engine_calculo(df_base_exp, t_usadas, df_ts_exp)
+                        st.download_button("📥 Baixar Excel", to_excel(df_final_exp), f"comparativo_{r['id']}.xlsx")
