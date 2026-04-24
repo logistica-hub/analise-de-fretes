@@ -173,86 +173,71 @@ def to_excel(df_completo):
     return output.getvalue()
 
 # --- SIDEBAR ATUALIZADA ---
-
 with st.sidebar:
-
     st.title("Ave Maria")
-
     
-
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
-
     
-
     if st.session_state.logo_data:
-
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
-
         with col_l2:
-
             st.image(st.session_state.logo_data, width=100)
-
         
-
         if st.button("✏️ Alterar Logo", use_container_width=True):
-
             st.session_state.logo_data = None
-
             st.rerun()
-
     else:
-
         up_logo = st.file_uploader("🖼️ Logo da Empresa", type=["png", "jpg", "jpeg"])
-
         if up_logo:
-
             st.session_state.logo_data = up_logo.read()
-
             st.rerun()
-
     
-
     st.divider()
-
     
-
-    # Lista única de navegação para evitar erros de atualização
+    # CSS para esconder a bolinha do 5º item (o "---") e transformá-lo em uma linha
+    st.markdown("""
+        <style>
+            /* Localiza o 5º item do rádio (o separador) */
+            div[role="radiogroup"] > div:nth-child(5) {
+                pointer-events: none; /* Bloqueia o clique */
+                margin: 10px 0;
+            }
+            /* Esconde o rádio (bolinha) e o texto "---" */
+            div[role="radiogroup"] > div:nth-child(5) label {
+                display: none !important;
+            }
+            /* Desenha a linha no lugar */
+            div[role="radiogroup"] > div:nth-child(5)::after {
+                content: "";
+                display: block;
+                width: 100%;
+                height: 1px;
+                background-color: rgba(255, 255, 255, 0.2);
+            }
+        </style>
+    """, unsafe_allow_html=True)
 
     menu_opcoes = [
-
         "📊 Dashboard", 
-
         "🧮 Cotação", 
-
         "🚛 Cadastro de Transportadora", 
-
-        "💰 Calculo de Comparativo",
-
-        "---", # Separador Visual
-
+        "💰 Cálculo de Comparativo",
+        "---", # O CSS vai agir aqui
         "📂 Base de Notas", 
-
-        "📜 Historico de Comparativos"
-
+        "📜 Histórico de Comparativos"
     ]
-
     
-
+    # Define um index inicial seguro (0 = Dashboard)
     escolha = st.radio("Navegação", menu_opcoes)
-
     
-
-    # Lógica para tratar o separador e unificar a variável menu
-
+    # Lógica que garante que 'menu' nunca seja vazio ou o separador
     if escolha == "---":
-
-        st.info("Selecione uma opção acima ou abaixo.")
-
-        menu = "📊 Dashboard"
-
+        menu = "📊 Dashboard" # Fallback de segurança
     else:
-
         menu = escolha
+
+# O resto do seu código usa a variável 'menu' para carregar as páginas
+st.write(f"Você está em: {menu}")
         
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
