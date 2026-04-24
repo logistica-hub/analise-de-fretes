@@ -10,7 +10,7 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS Original do Usuário (Versão 18.0)
+# CSS Original do Usuário (Versão 19.0)
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -67,25 +67,33 @@ def to_excel(df_completo):
     output = BytesIO()
     cols_total = [c for c in df_completo.columns if c.startswith("TOTAL_")]
     transportadoras = [c.replace("TOTAL_", "") for c in cols_total]
-    prefixos = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "OUTROS_", "TOTAL_"]
+    
+    # Adicionado SUFRAMA, FLUVIAL e REDESPACHO_F ao filtro de prefixos para organização por abas
+    prefixos = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "SUFRAMA_", "FLUVIAL_", "REDESPACHO_F_", "OUTROS_", "TOTAL_"]
+    
     cols_originais = [c for c in df_completo.columns if not any(c.startswith(p) for p in prefixos)]
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_geral = df_completo[cols_originais + cols_total].copy()
         df_geral.to_excel(writer, index=False, sheet_name='Geral')
+        
         for t in transportadoras:
             cols_especificas = [c for c in df_completo.columns if c.endswith(f'_{t}')]
             df_t = df_completo[cols_originais + cols_especificas].copy()
             df_t.columns = [c.replace(f'_{t}', '') for c in df_t.columns]
+            
             if 'TOTAL' in df_t.columns:
                 cols_ordenadas = [c for c in df_t.columns if c != 'TOTAL'] + ['TOTAL']
                 df_t = df_t[cols_ordenadas]
+            
             df_t.to_excel(writer, index=False, sheet_name=t[:31])
+            
     return output.getvalue()
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave Maria - Analise de Fretes")
-    st.info("Versão 18.0")
+    st.info("Versão 19.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -98,34 +106,12 @@ with st.sidebar:
             st.session_state.logo_data = up_logo.read()
             st.rerun()
     st.divider()
-    # Adicionado "📜 Histórico" ao menu
     menu = st.radio("Navegação", ["📊 Dashboard", "📂 Base Comercial", "🚛 Cadastro de Transportadora", "💰 Comparativo", "📜 Histórico"])
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
-    
-    st.markdown("""
-        <style>
-        span[data-baseweb="tag"] {
-            background-color: #f1f5f9 !important;
-            border: 1px solid #e2e8f0 !important;
-            border-radius: 6px !important;
-            padding: 2px 8px !important;
-        }
-        span[data-baseweb="tag"] span {
-            color: #475569 !important;
-            font-size: 12px !important;
-        }
-        span[data-baseweb="tag"] [role="button"] svg {
-            fill: #94a3b8 !important;
-        }
-        div[data-testid="column"] {
-            padding: 0 10px !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
+    # Busca dados completos apenas para o Dashboard
     res = supabase.table("cotacoes").select("*").execute()
     if res.data:
         all_dfs = [pd.DataFrame(r['detalhes_json']) for r in res.data if r['detalhes_json']]
@@ -165,7 +151,6 @@ if menu == "📊 Dashboard":
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.subheader("💰 Melhor Custo por Estado")
-                
                 if col_uf:
                     df_uf = df_filt.groupby(col_uf)[cols_sel].sum()
                     df_uf.columns = [c.replace("TOTAL_", "") for c in df_uf.columns]
@@ -299,6 +284,11 @@ elif menu == "💰 Comparativo":
                 emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
                 ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
                 
+                # CORREÇÃO: Taxas detalhadas com colunas próprias
+                suf = valores_notas * get_v(m['taxas'].get("Suframa"))
+                fluv = valores_notas * get_v(m['taxas'].get("Fluvial"))
+                red_f = get_v(m['taxas'].get("Redespacho Fluvial"))
+
                 df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
                 df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
                 df_final[f'ADVAL_{t_nome}'] = adv
@@ -307,8 +297,14 @@ elif menu == "💰 Comparativo":
                 df_final[f'PEDAGIO_{t_nome}'] = ped
                 df_final[f'TAS_{t_nome}'] = get_v(m['taxas'].get("TAS"))
                 df_final[f'CTRC_{t_nome}'] = get_v(m['taxas'].get("CTRC"))
-                df_final[f'OUTROS_{t_nome}'] = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
-                df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + df_final[f'OUTROS_{t_nome}']
+                
+                # Detalhamento solicitado
+                df_final[f'SUFRAMA_{t_nome}'] = suf
+                df_final[f'FLUVIAL_{t_nome}'] = fluv
+                df_final[f'REDESPACHO_F_{t_nome}'] = red_f
+                df_final[f'OUTROS_{t_nome}'] = 0.0 # Zerado pois agora estão detalhados acima
+                
+                df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + suf + fluv + red_f
 
             progresso_bar.progress(1.0)
             
@@ -321,56 +317,55 @@ elif menu == "💰 Comparativo":
                 for i in range(0, len(dados_completos), tamanho_lote):
                     lote = dados_completos[i:i + tamanho_lote]
                     lote_num = (i // tamanho_lote) + 1
-                    status_text.text(f"💾 Cotando {lote_num} de {total_lotes}...")
+                    status_text.text(f"💾 Salvando lote {lote_num} de {total_lotes}...")
                     supabase.table("cotacoes").insert({"data_hora": data_sao_paulo, "qtd": len(lote), "detalhes_json": lote}).execute()
                 
-                st.success(f"Cotação de {len(df_base)} linhas salva com sucesso!")
+                st.success(f"Cotação salva com sucesso!")
                 st.rerun()
             except Exception as e: 
                 st.error(f"Erro ao salvar histórico: {e}")
     else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
 
-# --- HISTÓRICO (AGORA DENTRO DE UMA ABA EXCLUSIVA) ---
+# --- HISTÓRICO (OTIMIZADO COM LAZY LOADING) ---
 elif menu == "📜 Histórico":
     st.title("📜 Histórico de Cotações")
-    res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
+    # OTIMIZAÇÃO: Busca apenas metadados (id, data, qtd) para carregar a tela instantaneamente
+    res_h = supabase.table("cotacoes").select("id, data_hora, qtd").order("id", desc=True).execute()
+    
     if res_h.data:
-        df_hist_raw = pd.DataFrame(res_h.data)
-        for t_ref, g in df_hist_raw.groupby("data_hora", sort=False):
-            det = []
-            for d in g['detalhes_json']:
-                if isinstance(d, list): det.extend(d)
-                elif isinstance(d, dict): det.append(d)
-            
-            df_det = pd.DataFrame(det) if det else pd.DataFrame()
-            
-            with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
-                if not df_det.empty:
-                    cols_totais = [c for c in df_det.columns if str(c).startswith("TOTAL_")]
-                    c_btn1, c_btn2 = st.columns(2)
-                    
-                    c_btn1.download_button(
-                        f"📥 Baixar Relatório Multi-Abas", 
-                        data=to_excel(df_det), 
-                        file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx",
-                        key=f"dl_{g['id'].iloc[0]}"
-                    )
-                    
-                    if c_btn2.button("🗑️ Remover Registro", key=f"del_{g['id'].iloc[0]}"):
-                        for rid in g['id']:
-                            supabase.table("cotacoes").delete().eq("id", rid).execute()
-                        st.rerun()
-                    
-                    if not df_det.empty and cols_totais:
-                        resumo = df_det[cols_totais].sum().reset_index()
-                        resumo.columns = ['Transportadora', 'Frete Total']
-                        resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
-                        st.table(resumo.style.format({'Frete Total': format_brl}))
-                else:
-                    st.warning("Registro antigo contém dados incompatíveis.")
-                    if st.button("🗑️ Remover Registro Corrompido", key=f"del_err_{g['id'].iloc[0]}"):
-                        for rid in g['id']:
-                            supabase.table("cotacoes").delete().eq("id", rid).execute()
-                        st.rerun()
+        df_meta = pd.DataFrame(res_h.data)
+        # Agrupa por data_hora para mostrar blocos de relatórios
+        for data_ref, g in df_meta.groupby("data_hora", sort=False):
+            with st.expander(f"📦 {data_ref} | {g['qtd'].sum()} Notas"):
+                # O detalhe (JSON pesado) só é buscado se o usuário clicar no botão de baixar
+                c_btn1, c_btn2 = st.columns(2)
+                
+                if c_btn1.button(f"🔍 Preparar Download", key=f"prep_{g['id'].iloc[0]}"):
+                    with st.spinner("Baixando dados detalhados..."):
+                        # Busca os detalhes_json apenas deste registro específico
+                        ids_lote = g['id'].tolist()
+                        res_detalhe = supabase.table("cotacoes").select("detalhes_json").in_("id", ids_lote).execute()
+                        
+                        det_full = []
+                        for item in res_detalhe.data:
+                            d = item['detalhes_json']
+                            if isinstance(d, list): det_full.extend(d)
+                            elif isinstance(d, dict): det_full.append(d)
+                        
+                        df_det = pd.DataFrame(det_full)
+                        excel_data = to_excel(df_det)
+                        
+                        st.download_button(
+                            "📥 Clique aqui para Baixar Excel",
+                            data=excel_data,
+                            file_name=f"Cotacao_{data_ref.replace('/','-')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"dl_ready_{g['id'].iloc[0]}"
+                        )
+                
+                if c_btn2.button("🗑️ Remover Registro", key=f"del_{g['id'].iloc[0]}"):
+                    for rid in g['id']:
+                        supabase.table("cotacoes").delete().eq("id", rid).execute()
+                    st.rerun()
     else:
         st.info("Nenhuma cotação salva no histórico.")
