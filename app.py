@@ -100,9 +100,35 @@ with st.sidebar:
     st.divider()
     menu = st.radio("Navegação", ["📊 Dashboard", "📂 Base Comercial", "🚛 Cadastro de Transportadora", "💰 Comparativo"])
 
-# --- DASHBOARD ATUALIZADO (Lógica de destaque corrigida) ---
+# --- DASHBOARD COM FILTROS OTIMIZADOS (ESTILO VERSÃO 18.0) ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
+    
+    # CSS específico para deixar os filtros (tags) menores e mais discretos
+    st.markdown("""
+        <style>
+        /* Diminui o tamanho das tags nos filtros multiselect */
+        span[data-baseweb="tag"] {
+            background-color: #f1f5f9 !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 6px !important;
+            padding: 2px 8px !important;
+        }
+        span[data-baseweb="tag"] span {
+            color: #475569 !important;
+            font-size: 12px !important;
+        }
+        /* Remove o ícone de 'X' vermelho pesado e coloca um cinza discreto */
+        span[data-baseweb="tag"] [role="button"] svg {
+            fill: #94a3b8 !important;
+        }
+        /* Ajusta o espaçamento entre as colunas de filtro */
+        div[data-testid="column"] {
+            padding: 0 10px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     res = supabase.table("cotacoes").select("*").execute()
     if res.data:
         all_dfs = [pd.DataFrame(r['detalhes_json']) for r in res.data if r['detalhes_json']]
@@ -111,17 +137,21 @@ if menu == "📊 Dashboard":
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
             
-            f1, f2, f3 = st.columns(3)
-            sel_tr = f1.multiselect("Transportadoras", nomes_t, default=nomes_t)
+            # Container de Filtros com visual limpo
+            with st.container():
+                f1, f2, f3 = st.columns([1.5, 2.5, 1.5]) # Ajuste de largura proporcional
+                
+                sel_tr = f1.multiselect("🚛 Transportadoras", nomes_t, default=nomes_t)
+                
+                col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
+                lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
+                sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
+                
+                col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA']), None)
+                lista_datas = sorted(df_total[col_data].unique()) if col_data else []
+                sel_data = f3.multiselect("📅 Período", lista_datas, default=lista_datas)
             
-            col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
-            lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
-            sel_uf = f2.multiselect("Estados (UF)", lista_ufs, default=lista_ufs)
-            
-            col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA']), None)
-            lista_datas = sorted(df_total[col_data].unique()) if col_data else []
-            sel_data = f3.multiselect("Período", lista_datas, default=lista_datas)
-            
+            # --- Restante do cálculo (filtros aplicados) ---
             df_filt = df_total.copy()
             if col_uf: df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
             if col_data: df_filt = df_filt[df_filt[col_data].isin(sel_data)]
@@ -129,6 +159,7 @@ if menu == "📊 Dashboard":
             cols_sel = [f"TOTAL_{t}" for t in sel_tr]
             
             if not df_filt.empty and cols_sel:
+                # Métricas e Tabela (mesma lógica da 18.0 aprovada)
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), None)
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf else 0
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), None)
@@ -143,25 +174,20 @@ if menu == "📊 Dashboard":
                 with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">INVESTIMENTO EM FRETE</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                st.subheader("💰 Melhor Custo por Estado (Ignorando Zerados)")
+                st.subheader("💰 Melhor Custo por Estado")
                 
                 if col_uf:
                     df_uf = df_filt.groupby(col_uf)[cols_sel].sum()
                     df_uf.columns = [c.replace("TOTAL_", "") for c in df_uf.columns]
                     
-                    # NOVA LÓGICA DE PINTURA:
                     def highlight_min_no_zero(s):
-                        # Criamos uma máscara que ignora valores <= 0
                         s_validos = s[s > 0]
-                        if not s_validos.empty:
-                            is_min = s == s_validos.min()
-                        else:
-                            is_min = [False] * len(s)
+                        is_min = s == s_validos.min() if not s_validos.empty else [False]*len(s)
                         return ['background-color: #ecfdf5; color: #065f46; font-weight: bold; border: 1px solid #10b981' if v else 'color: #475569' for v in is_min]
                     
                     st.dataframe(df_uf.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
     else: st.info("Sem histórico de cotações para exibir.")
-
+        
 # --- ABA DE BASE COMERCIAL ---
 elif menu == "📂 Base Comercial":
     st.title("📂 Gestão da Base Comercial")
