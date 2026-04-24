@@ -194,7 +194,7 @@ with st.sidebar:
     # Menos Principais
     menu_principal = st.radio(
         "Navegação", 
-        ["📊 Dashboard", "🧮 Calculadora Rápida", "🚛 Cadastro de Transportadora", "💰 Comparativo"]
+        ["📊 Dashboard", "🧮 Cotação", "🚛 Cadastro de Transportadora", "💰 Calculo Frete"]
     )
     
     # Espaçador e Divisor para os itens de gerenciamento
@@ -204,7 +204,7 @@ with st.sidebar:
     
     menu_dados = st.radio(
         "Arquivos",
-        ["📂 Base Comercial", "📜 Histórico"],
+        ["📂 Base de Notas", "📜 Histórico"],
         label_visibility="collapsed" # Esconde o texto "Arquivos" para ficar mais limpo
     )
 
@@ -214,7 +214,7 @@ with st.sidebar:
     # garante que o 'menu' final seja o que você clicou por último.
     
     # Pequeno truque: vamos usar uma variável única para o controle principal
-    if menu_dados == "📂 Base Comercial" or menu_dados == "📜 Histórico":
+    if menu_dados == "📂 Base de Notas" or menu_dados == "📜 Histórico":
         # Para evitar conflito de seleção, o ideal é usar um selectbox ou 
         # botões, mas para manter seu código funcionando sem mudar os "ifs",
         # use esta variável única:
@@ -331,8 +331,8 @@ if menu == "📊 Dashboard":
                     st.dataframe(df_pivot.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
     else: st.info("Sem histórico de cotações para exibir.")
 # --- CALCULADORA RÁPIDA ---
-elif menu == "🧮 Calculadora Rápida":
-    st.title("🧮 Calculadora de Frete Unitário")
+elif menu == "🧮 Cotação de Frete":
+    st.title("🧮 Cotação de Frete")
     st.info("Simule uma cotação rápida. Os dados preenchidos aqui não são salvos no banco de dados.")
     
     # Busca as transportadoras cadastradas para o usuário escolher
@@ -405,8 +405,8 @@ elif menu == "🧮 Calculadora Rápida":
                         st.error(f"Erro ao calcular: {e}")
 
 # --- BASE COMERCIAL ---
-elif menu == "📂 Base Comercial":
-    st.title("📂 Gestão da Base Comercial")
+elif menu == "📂 Base de Notas":
+    st.title("📂 Gestão da Base Notas")
     up_base = st.file_uploader("Subir Base de Notas (Excel)", type=["xlsx"])
     if up_base:
         if st.button("💾 Salvar Base no Sistema"):
@@ -474,7 +474,7 @@ elif menu == "🚛 Cadastro de Transportadora":
             if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
 # --- COMPARATIVO ---
-elif menu == "💰 Comparativo":
+elif menu == "💰 Calculo de Frete":
     st.title("💰 Cotação de Fretes")
     res_base = supabase.table("base_comercial").select("*").execute()
     res_t = supabase.table("transportadoras").select("*").execute()
