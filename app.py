@@ -354,10 +354,6 @@ elif menu == "🧮 Cotação":
                 with st.spinner("Calculando..."):
                     try:
                         res_calc = engine_calculo(df_simulado, transp_selecionadas, df_ts)
-                        
-                        # --- LINHA PARA DEBUG (APAGUE DEPOIS) ---
-                        # st.write("Colunas encontradas:", res_calc.columns.tolist()) 
-
                         st.subheader("🏁 Comparativo de Preços")
                         
                         ranking = []
@@ -369,30 +365,29 @@ elif menu == "🧮 Cotação":
                         
                         ranking = sorted(ranking, key=lambda x: x['total'] if x['total'] > 0 else 999999)
 
-                        # MAPEAMENTO ATUALIZADO (Confirme se os nomes batem com sua engine)
+                        # MAPEAMENTO CORRIGIDO PARA BATER COM SUA ENGINE_CALCULO
                         mapeamento_taxas = {
-                            "FRETE_PESO": "Frete Peso",
-                            "FRETE_EXCEDENTE": "KG Adicional",
-                            "AD_VALOREM_PERC": "Ad Valorem %",
-                            "AD_VALOREM_MIN": "Ad Valorem Min",
-                            "GRIS_PERC": "Gris %",
-                            "GRIS_MIN": "Gris Min",
+                            "PESO_BASE": "Frete Peso",
+                            "KG_ADIC": "KG Adicional",
+                            "ADVAL": "Ad Valorem",
+                            "GRIS": "Gris",
+                            "EMEX": "Emex",
                             "PEDAGIO": "Pedágio",
-                            "CTRC": "CTRC",
                             "TAS": "TAS",
+                            "CTRC": "CTRC",
+                            "SUFRAMA": "Suframa",
                             "SEC_CAT": "SEC-CAT",
+                            "FLUVIAL": "Fluvial",
+                            "REDESPACHO_F": "Redespacho Fluv.",
+                            "TDA": "TDA",
                             "DESPACHO": "Despacho",
-                            "TDA_MIN": "TDA Min",
-                            "TDA_PERC": "TDA %",
-                            "TRT_PERC": "TRT %",
-                            "EMEX_MIN": "Emex Min",
-                            "SUFRAMA": "Suframa"
+                            "TRT": "TRT"
                         }
 
                         for item in ranking:
                             t_nome = item['transp']
                             if item['total'] > 0:
-                                # CARD PRINCIPAL COMPACTO
+                                # CARD VISUAL COMPACTO (Margens e Fontes menores)
                                 st.markdown(f"""
                                 <div style="background-color: #ffffff; padding: 8px 15px; border-radius: 8px; border-left: 4px solid #10b981; margin-bottom: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
                                     <div>
@@ -406,17 +401,15 @@ elif menu == "🧮 Cotação":
                                 </div>
                                 """, unsafe_allow_html=True)
 
-                                # DETALHAMENTO
+                                # DETALHAMENTO EM TEXTO REDUZIDO
                                 detalhes_exibir = []
-                                
-                                # 1. Primeiro buscamos as taxas do mapeamento
                                 for col_key, label in mapeamento_taxas.items():
                                     col_full = f"{col_key}_{t_nome}"
                                     if col_full in res_calc.columns:
                                         v = res_calc[col_full].iloc[0]
                                         if v > 0:
-                                            # Destaque para Frete Peso e Excedente
-                                            if "PESO" in col_key or "EXCEDENTE" in col_key:
+                                            # Destaque para Frete Peso e Adicional
+                                            if col_key in ["PESO_BASE", "KG_ADIC"]:
                                                 detalhes_exibir.append(f"<div style='font-size: 0.85rem; color: #1e293b;'><b>{label}: {format_brl(v)}</b></div>")
                                             else:
                                                 detalhes_exibir.append(f"<div style='font-size: 0.8rem; color: #475569;'>{label}: {format_brl(v)}</div>")
