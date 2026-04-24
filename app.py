@@ -187,7 +187,7 @@ if menu == "📊 Dashboard":
                     
                     st.dataframe(df_uf.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
     else: st.info("Sem histórico de cotações para exibir.")
-        
+
 # --- ABA DE BASE COMERCIAL ---
 elif menu == "📂 Base Comercial":
     st.title("📂 Gestão da Base Comercial")
@@ -255,7 +255,7 @@ elif menu == "🚛 Cadastro de Transportadora":
         if c[1].button("✏️", key=f"ed{r['id']}"): st.session_state.edit_id = r['id']; st.rerun()
         if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- COMPARATIVO ATUALIZADO COM BARRA DE PROGRESSO (VERSÃO 18.0) ---
+# --- COMPARATIVO ATUALIZADO COM BARRA DE PROGRESSO E LOTES ---
 elif menu == "💰 Comparativo":
     st.title("💰 Comparativo Massivo")
     res_base = supabase.table("base_comercial").select("*").execute()
@@ -268,14 +268,12 @@ elif menu == "💰 Comparativo":
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         
         if selecionadas and st.button("🚀 Calcular"):
-            # --- INÍCIO DA BARRA DE PROGRESSO ---
             progresso_bar = st.progress(0)
             status_text = st.empty()
             total_tr = len(selecionadas)
             
             df_final = df_base.copy()
             
-            # Identificação das colunas (mesma lógica robusta da 18.0)
             col_cid_nome = next((c for c in df_base.columns if 'CIDADE' in c.upper()), df_base.columns[2])
             col_peso_nome = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
             col_valor_nome = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
@@ -285,7 +283,6 @@ elif menu == "💰 Comparativo":
             valores_notas = pd.to_numeric(df_base[col_valor_nome], errors='coerce').fillna(0).values
 
             for idx, t_nome in enumerate(selecionadas):
-                # Atualiza a barra de progresso
                 percentual = (idx) / total_tr
                 progresso_bar.progress(percentual)
                 status_text.text(f"Calculando frete: {t_nome} ({idx + 1}/{total_tr})")
@@ -293,7 +290,6 @@ elif menu == "💰 Comparativo":
                 t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
                 m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
                 
-                # ... (Toda a lógica de cálculo interno permanece idêntica à 18.0) ...
                 df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
                 dic_ponte = df_abr.set_index('cid_clean')[m['ap_sigla']].astype(str).apply(super_limpeza).to_dict()
                 siglas_match = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
@@ -327,60 +323,68 @@ elif menu == "💰 Comparativo":
                 df_final[f'OUTROS_{t_nome}'] = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
                 df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + df_final[f'OUTROS_{t_nome}']
 
-            # Finaliza a barra
             progresso_bar.progress(1.0)
-            status_text.text("💾 Salvando no banco de dados...")
             
+            # --- SALVAMENTO EM LOTES (RESOLUÇÃO PARA 17K+ LINHAS) ---
             try:
                 data_sao_paulo = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M")
-                supabase.table("cotacoes").insert({"data_hora": data_sao_paulo, "qtd": len(df_base), "detalhes_json": df_final.fillna(0).to_dict(orient='records')}).execute()
-                st.success("Cálculo realizado com sucesso!")
-                st.rerun()
-            except Exception: 
-                st.error("Erro ao salvar histórico.")
-    else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
-   # HISTÓRICO - VERSÃO 18.0 COM TRAVA DE SEGURANÇA
-    st.divider()
-    res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
-    if res_h.data:
-        df_hist_raw = pd.DataFrame(res_h.data)
-        for t_ref, g in df_hist_raw.groupby("data_hora", sort=False):
-            det = []
-            # Trava de segurança para ler o JSON do banco
-            for d in g['detalhes_json']:
-                if isinstance(d, list): 
-                    det.extend(d)
-                elif isinstance(d, dict):
-                    det.append(d)
-            
-            # Se det estiver vazio ou inválido, criamos um DataFrame vazio para não travar
-            df_det = pd.DataFrame(det) if det else pd.DataFrame()
-            
-            with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
-                # Verificamos se o DataFrame tem colunas antes de processar
-                if not df_det.empty:
-                    cols_totais = [c for c in df_det.columns if str(c).startswith("TOTAL_")]
-                    c_btn1, c_btn2 = st.columns(2)
-                    
-                    c_btn1.download_button(
-                        f"📥 Baixar Relatório Multi-Abas", 
-                        data=to_excel(df_det), 
-                        file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx",
-                        key=f"dl_{g['id'].iloc[0]}" # Key única para evitar erro de ID duplicado
-                    )
-                else:
-                    st.warning("Este registro antigo contém dados incompatíveis.")
-                    c_btn1, c_btn2 = st.columns(2)
-
-                # O botão de remover agora fica fora do IF dos dados, 
-                # permitindo que você exclua o registro ruim!
-                if c_btn2.button("🗑️ Remover Registro", key=f"del_{g['id'].iloc[0]}"):
-                    for rid in g['id']:
-                        supabase.table("cotacoes").delete().eq("id", rid).execute()
-                    st.rerun()
+                dados_completos = df_final.fillna(0).to_dict(orient='records')
                 
-                if not df_det.empty and cols_totais:
-                    resumo = df_det[cols_totais].sum().reset_index()
-                    resumo.columns = ['Transportadora', 'Frete Total']
-                    resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
-                    st.table(resumo.style.format({'Frete Total': format_brl}))
+                tamanho_lote = 2000
+                total_lotes = (len(dados_completos) // tamanho_lote) + 1
+                
+                for i in range(0, len(dados_completos), tamanho_lote):
+                    lote = dados_completos[i:i + tamanho_lote]
+                    lote_num = (i // tamanho_lote) + 1
+                    status_text.text(f"💾 Salvando lote {lote_num} de {total_lotes}...")
+                    
+                    supabase.table("cotacoes").insert({
+                        "data_hora": data_sao_paulo, 
+                        "qtd": len(lote), 
+                        "detalhes_json": lote
+                    }).execute()
+                
+                st.success(f"Cotação de {len(df_base)} linhas salva com sucesso!")
+                st.rerun()
+            except Exception as e: 
+                st.error(f"Erro ao salvar histórico: {e}")
+    else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
+
+# --- HISTÓRICO ---
+st.divider()
+res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
+if res_h.data:
+    df_hist_raw = pd.DataFrame(res_h.data)
+    for t_ref, g in df_hist_raw.groupby("data_hora", sort=False):
+        det = []
+        for d in g['detalhes_json']:
+            if isinstance(d, list): det.extend(d)
+            elif isinstance(d, dict): det.append(d)
+        
+        df_det = pd.DataFrame(det) if det else pd.DataFrame()
+        
+        with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
+            if not df_det.empty:
+                cols_totais = [c for c in df_det.columns if str(c).startswith("TOTAL_")]
+                c_btn1, c_btn2 = st.columns(2)
+                
+                c_btn1.download_button(
+                    f"📥 Baixar Relatório Multi-Abas", 
+                    data=to_excel(df_det), 
+                    file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx",
+                    key=f"dl_{g['id'].iloc[0]}"
+                )
+            else:
+                st.warning("Registro antigo contém dados incompatíveis.")
+                c_btn1, c_btn2 = st.columns(2)
+
+            if c_btn2.button("🗑️ Remover Registro", key=f"del_{g['id'].iloc[0]}"):
+                for rid in g['id']:
+                    supabase.table("cotacoes").delete().eq("id", rid).execute()
+                st.rerun()
+            
+            if not df_det.empty and cols_totais:
+                resumo = df_det[cols_totais].sum().reset_index()
+                resumo.columns = ['Transportadora', 'Frete Total']
+                resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
+                st.table(resumo.style.format({'Frete Total': format_brl}))
