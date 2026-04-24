@@ -57,8 +57,8 @@ def format_brl(val):
     return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def format_kg(val):
-    if pd.isna(val) or val == 0: return "0,00 kg"
-    return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " kg"
+    if pd.isna(val) or val == 0: return "0,000 kg"
+    return f"{val:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".") + " kg"
 
 def super_limpeza(txt):
     if not txt or pd.isna(txt): return ""
@@ -564,23 +564,3 @@ elif menu == "📜 Historico de Comparativos":
                             df_base_exp = pd.DataFrame(res_b.data[0]['dados_json'])
                             t_usadas = df_h['lista_t'].iloc[0]
                             res_t_exp = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
-                            df_ts_exp = pd.DataFrame(res_t_exp.data)
-                            
-                            df_detalhado = engine_calculo(df_base_exp, t_usadas, df_ts_exp)
-                            excel_data = to_excel(df_detalhado)
-                            
-                            st.download_button(
-                                label="📥 Clique aqui para Baixar Excel",
-                                data=excel_data,
-                                file_name=f"Cotacao_{dt.replace('/','-').replace(':','-')}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key=f"dl_ready_{r['id']}"
-                            )
-                        else:
-                            st.error("Base original não encontrada.")
-                
-                if c2.button("🗑️ Remover", key=f"del_{r['id']}"):
-                    supabase.table("cotacoes").delete().eq("id", r['id']).execute()
-                    st.rerun()
-    else:
-        st.info("Nenhum histórico encontrado.")
