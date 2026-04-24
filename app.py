@@ -172,11 +172,11 @@ def to_excel(df_completo):
             df_t.to_excel(writer, index=False, sheet_name=t[:31])
     return output.getvalue()
 
-# --- SIDEBAR ATUALIZADA ---
+## --- SIDEBAR ATUALIZADA ---
 with st.sidebar:
     st.title("Ave Maria")
     
-    # --- LOGO ---
+    # --- LOGO (Mantido original) ---
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
@@ -191,49 +191,64 @@ with st.sidebar:
             st.rerun()
     
     st.divider()
-
-    # --- CSS PARA TRANSFORMAR A OPÇÃO "---" EM UM RISCO REAL ---
-    st.markdown("""
-        <style>
-            /* Esconde a bolinha e o texto do item que contém "---" */
-            div[role="radiogroup"] > div:nth-child(5) {
-                pointer-events: none; /* Impede clique */
-                cursor: default;
-            }
-            div[role="radiogroup"] > div:nth-child(5) > label {
-                display: none; /* Esconde o rádio e o texto */
-            }
-            /* Adiciona uma linha no lugar do 5º item */
-            div[role="radiogroup"] > div:nth-child(5)::before {
-                content: "";
-                display: block;
-                height: 1px;
-                background-color: #4B4B4B; /* Cor da linha */
-                margin: 10px 0;
-                width: 100%;
-            }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # Lista única (O "---" é o 5º item)
-    menu_opcoes = [
+    
+    # --- NAVEGAÇÃO ---
+    # Para evitar que o rádio mostre a bolinha no separador, 
+    # dividimos em dois grupos ou usamos uma lógica de índice.
+    
+    opcoes_superiores = [
         "📊 Dashboard", 
         "🧮 Cotação", 
         "🚛 Cadastro de Transportadora", 
-        "💰 Cálculo de Comparativo",
-        "---", # Este será transformado em linha pelo CSS acima
+        "💰 Cálculo de Comparativo"
+    ]
+    
+    opcoes_inferiores = [
         "📁 Base de Notas", 
         "📜 Histórico de Comparativos"
     ]
 
-    # Renderiza como um único rádio (seleção perfeita)
-    escolha = st.radio("Navegação", menu_opcoes)
+    # Lista completa para controle de estado
+    menu_total = opcoes_superiores + opcoes_inferiores
+    
+    # Inicializa o estado do menu se não existir
+    if 'menu_selecionado' not in st.session_state:
+        st.session_state.menu_selecionado = "📊 Dashboard"
 
-    # Se o usuário de alguma forma cair no "---", volta para o Dashboard
-    if escolha == "---":
-        menu = "📊 Dashboard"
-    else:
-        menu = escolha
+    # Define o índice atual para o rádio saber onde está
+    try:
+        idx_atual = menu_total.index(st.session_state.menu_selecionado)
+    except:
+        idx_atual = 0
+
+    # Renderiza a primeira parte
+    escolha_sup = st.radio(
+        "Navegação", 
+        opcoes_superiores, 
+        index=opcoes_superiores.index(st.session_state.menu_selecionado) if st.session_state.menu_selecionado in opcoes_superiores else None,
+        key="nav_sup"
+    )
+
+    # O "Risco" com espaço curto
+    st.markdown("---") 
+
+    # Renderiza a segunda parte
+    escolha_inf = st.radio(
+        "", # Título vazio para não repetir "Navegação"
+        opcoes_inferiores, 
+        index=opcoes_inferiores.index(st.session_state.menu_selecionado) if st.session_state.menu_selecionado in opcoes_inferiores else None,
+        key="nav_inf"
+    )
+
+    # Atualiza a variável 'menu' final baseada na interação
+    if escolha_sup and st.session_state.menu_selecionado != escolha_sup:
+        st.session_state.menu_selecionado = escolha_sup
+        st.rerun()
+    elif escolha_inf and st.session_state.menu_selecionado != escolha_inf:
+        st.session_state.menu_selecionado = escolha_inf
+        st.rerun()
+
+    menu = st.session_state.menu_selecionado
         
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
