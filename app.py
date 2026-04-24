@@ -361,6 +361,7 @@ elif menu == "🧮 Cotação":
                     try:
                         res_calc = engine_calculo(df_simulado, transp_selecionadas, df_ts)
                         st.subheader("🏁 Comparativo de Preços")
+                        
                         ranking = []
                         for t in transp_selecionadas:
                             valor_total = res_calc[f'TOTAL_{t}'].iloc[0]
@@ -372,7 +373,7 @@ elif menu == "🧮 Cotação":
                             t_nome = item['transp']
                             with st.container():
                                 if item['total'] > 0:
-                                    # Card Principal
+                                    # Card de resumo (mesmo estilo anterior)
                                     st.markdown(f"""
                                     <div style="background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #10b981; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
                                         <div>
@@ -386,27 +387,43 @@ elif menu == "🧮 Cotação":
                                     </div>
                                     """, unsafe_allow_html=True)
                                     
-                                    # --- NOVO: Detalhamento de Taxas ---
-                                    # Lista de possíveis sufixos de taxas que sua engine_calculo gera
-                                    taxas_possiveis = ["FPESO", "ADVALOREM", "GRIS", "PEDAGIO", "TAS", "TRT", "TDE", "TDA", "SUFRAMA"]
-                                    detalhes_exibir = {}
+                                    # --- DETALHAMENTO COMPLETO (IGUAL PLANILHA) ---
+                                    # Mapeamos todas as colunas que a engine costuma gerar
+                                    mapeamento_taxas = {
+                                        "FRETE_PESO": "Frete Peso / Mínimo",
+                                        "FRETE_EXCEDENTE": "Frete por KG Adicional",
+                                        "ADVALOREM": "Ad Valorem (Seguro)",
+                                        "GRIS": "GRIS (Risco)",
+                                        "PEDAGIO": "Pedágio",
+                                        "TDE": "Taxa de Difícil Entrega",
+                                        "TDA": "Taxa de Difícil Acesso",
+                                        "TRT": "Taxa Restrição Trânsito",
+                                        "TAS": "Taxa Adm. Sefaz",
+                                        "SUFRAMA": "Taxa de Suframa",
+                                        "EMEX": "EMEX (Emergencial)",
+                                        "DESCARGA": "Taxa de Descarga / Paletização"
+                                    }
+
+                                    detalhes_lista = []
+                                    for col_key, label in mapeamento_taxas.items():
+                                        # Monta o nome da coluna conforme o padrão da sua engine (ex: GRIS_Braspress)
+                                        full_col_name = f"{col_key}_{t_nome}"
+                                        
+                                        if full_col_name in res_calc.columns:
+                                            valor_v = res_calc[full_col_name].iloc[0]
+                                            if valor_v > 0:
+                                                detalhes_lista.append({"Descrição": label, "Valor": format_brl(valor_v)})
+
+                                    if detalhes_lista:
+                                        with st.expander(f"📋 Ver Planilha de Custos - {t_nome}"):
+                                            df_detalhe = pd.DataFrame(detalhes_lista)
+                                            # Mostra uma tabela limpa e profissional
+                                            st.table(df_detalhe.set_index("Descrição"))
                                     
-                                    for tx in taxas_possiveis:
-                                        col_name = f"{tx}_{t_nome}"
-                                        if col_name in res_calc.columns:
-                                            v_taxa = res_calc[col_name].iloc[0]
-                                            if v_taxa > 0:
-                                                detalhes_exibir[tx] = v_taxa
-                                    
-                                    if detalhes_exibir:
-                                        with st.expander(f"🔍 Ver taxas de {t_nome}"):
-                                            for nome_tx, valor_tx in detalhes_exibir.items():
-                                                st.write(f"**{nome_tx}:** {format_brl(valor_tx)}")
-                                    
-                                    st.markdown("<br>", unsafe_allow_html=True) # Espaço entre cards
+                                    st.markdown("<br>", unsafe_allow_html=True)
                                     
                                 else:
-                                    st.warning(f"🚫 **{t_nome}**: Não atende a região de {cid_input}-{uf_input} ou dados incompletos.")
+                                    st.warning(f"🚫 **{t_nome}**: Não atende a região ou dados incompletos.")
                     except Exception as e:
                         st.error(f"Erro ao calcular: {e}")
 
