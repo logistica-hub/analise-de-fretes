@@ -198,7 +198,7 @@ with st.sidebar:
     # Menu Principal
     menu = st.radio(
         "Navegação Principal", 
-        ["📊 Dashboard", "🧮 Cotação", "🚛 Cadastro de Transportadora", "💰 Comparativo"]
+        ["📊 Dashboard", "🧮 Calculadora Rápida", "🚛 Cadastro de Transportadora", "💰 Comparativo"]
     )
 
     # Espaçamento para separar os itens de baixo
