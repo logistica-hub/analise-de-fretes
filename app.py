@@ -182,7 +182,7 @@ with st.sidebar:
         # Colunas para centralizar e diminuir o logo
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
         with col_l2:
-            st.image(st.session_state.logo_data, width=120) # Define a largura fixa menor
+            st.image(st.session_state.logo_data, width=100) # Define a largura fixa menor
         
         if st.button("✏️ Alterar Logo", use_container_width=True):
             st.session_state.logo_data = None
