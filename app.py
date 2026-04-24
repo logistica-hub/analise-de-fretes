@@ -176,13 +176,11 @@ def to_excel(df_completo):
 with st.sidebar:
     st.title("Ave Maria")
     
+    # --- LOGO (Mantido conforme seu código) ---
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
-    
     if st.session_state.logo_data:
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
-        with col_l2:
-            st.image(st.session_state.logo_data, width=100)
-        
+        with col_l2: st.image(st.session_state.logo_data, width=100)
         if st.button("✏️ Alterar Logo", use_container_width=True):
             st.session_state.logo_data = None
             st.rerun()
@@ -193,51 +191,48 @@ with st.sidebar:
             st.rerun()
     
     st.divider()
-    
-    # CSS para esconder a bolinha do 5º item (o "---") e transformá-lo em uma linha
+
+    # --- HACK PARA REMOVER A BOLINHA DO SEPARADOR ---
     st.markdown("""
         <style>
-            /* Localiza o 5º item do rádio (o separador) */
-            div[role="radiogroup"] > div:nth-child(5) {
-                pointer-events: none; /* Bloqueia o clique */
-                margin: 10px 0;
-            }
-            /* Esconde o rádio (bolinha) e o texto "---" */
-            div[role="radiogroup"] > div:nth-child(5) label {
+            /* Esconde a bolinha (radio) e o texto do 5º item (o "---") */
+            [data-testid="stSidebarNav"] div[role="radiogroup"] > div:nth-child(5) label {
                 display: none !important;
             }
-            /* Desenha a linha no lugar */
-            div[role="radiogroup"] > div:nth-child(5)::after {
+            /* Cria o risco no lugar do 5º item */
+            [data-testid="stSidebarNav"] div[role="radiogroup"] > div:nth-child(5)::before {
                 content: "";
                 display: block;
-                width: 100%;
                 height: 1px;
-                background-color: rgba(255, 255, 255, 0.2);
+                background-color: #4B4B4B;
+                margin: 10px 0;
+                width: 100%;
+            }
+            /* Impede que o mouse clique na linha */
+            [data-testid="stSidebarNav"] div[role="radiogroup"] > div:nth-child(5) {
+                pointer-events: none !important;
             }
         </style>
     """, unsafe_allow_html=True)
 
+    # Sua lista original
     menu_opcoes = [
         "📊 Dashboard", 
         "🧮 Cotação", 
         "🚛 Cadastro de Transportadora", 
-        "💰 Cálculo de Comparativo",
-        "---", # O CSS vai agir aqui
+        "💰 Calculo de Comparativo",
+        "---", # O CSS vai esconder a bolinha daqui e desenhar a linha
         "📂 Base de Notas", 
-        "📜 Histórico de Comparativos"
+        "📜 Historico de Comparativos"
     ]
     
-    # Define um index inicial seguro (0 = Dashboard)
     escolha = st.radio("Navegação", menu_opcoes)
     
-    # Lógica que garante que 'menu' nunca seja vazio ou o separador
+    # Lógica para evitar erro se "---" for selecionado (embora o clique esteja bloqueado)
     if escolha == "---":
-        menu = "📊 Dashboard" # Fallback de segurança
+        menu = "📊 Dashboard"
     else:
         menu = escolha
-
-# O resto do seu código usa a variável 'menu' para carregar as páginas
-st.write(f"Você está em: {menu}")
         
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
