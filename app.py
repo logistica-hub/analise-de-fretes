@@ -66,14 +66,18 @@ def super_limpeza(txt):
     txt = re.sub(r'\s+', ' ', txt) 
     return "".join(c for c in unicodedata.normalize('NFD', txt) if unicodedata.category(c) != 'Mn')
 
-# MOTOR DE CÁLCULO
+# --- MOTOR DE CÁLCULO CORRIGIDO ---
 def engine_calculo(df_base, selecionadas, df_ts):
     df_final = df_base.copy()
-    col_cid_nome = next((c for c in df_base.columns if 'CIDADE' in c.upper()), df_base.columns[2] if len(df_base.columns) > 2 else "CIDADE")
-    col_uf_nome = next((c for c in df_base.columns if c.upper() == 'UF'), df_base.columns[3] if len(df_base.columns) > 3 else "UF")
-    col_peso_nome = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6] if len(df_base.columns) > 6 else "PESO")
-    col_valor_nome = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7] if len(df_base.columns) > 7 else "VALOR")
     
+    # Identificação de colunas
+    col_cid_nome = next((c for c in df_base.columns if 'CIDADE' in c.upper()), "CIDADE")
+    col_uf_nome = next((c for c in df_base.columns if c.upper() == 'UF'), "UF")
+    col_peso_nome = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), "PESO")
+    col_valor_nome = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), "VALOR")
+    
+    # Conversão segura para arrays com o mesmo comprimento da base
+    n_linhas = len(df_base)
     cid_notas = df_base[col_cid_nome].astype(str).apply(super_limpeza).values
     uf_notas = df_base[col_uf_nome].astype(str).apply(super_limpeza).values
     pesos_notas = pd.to_numeric(df_base[col_peso_nome], errors='coerce').fillna(0).values
@@ -81,8 +85,11 @@ def engine_calculo(df_base, selecionadas, df_ts):
 
     for t_nome in selecionadas:
         t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
-        m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
+        m = t_r['mapeamento_json']
+        df_tab = pd.DataFrame(t_r['tabela_json'])
+        df_abr = pd.DataFrame(t_r['cidades_json'])
         
+        # Limpeza da tabela de abrangência
         df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
         df_abr['uf_clean'] = df_abr[m.get('ap_uf', m['ap_cidade'])].astype(str).apply(super_limpeza)
         
@@ -91,34 +98,40 @@ def engine_calculo(df_base, selecionadas, df_ts):
             for _, row in df_abr.iterrows()
         }
         
-        siglas_match = []
-        for c, u in zip(cid_notas, uf_notas):
-            siglas_match.append(dic_ponte.get((c, u), "ND"))
-        siglas_match = np.array(siglas_match)
+        # Mapeamento de siglas (Garante tamanho n_linhas)
+        siglas_match = np.array([dic_ponte.get((c, u), "ND") for c, u in zip(cid_notas, uf_notas)])
 
+        # Preparação da tabela de preços
         df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza)
         df_tab_idx = df_tab.set_index('sig_clean')
         
-        def get_v(col): 
-            if col and col != "Não mapear" and col in df_tab_idx.columns:
-                return df_tab_idx[col].reindex(siglas_match).fillna(0).values
-            return np.zeros(len(df_base))
+        def get_v(col_name): 
+            if col_name and col_name != "Não mapear" and col_name in df_tab_idx.columns:
+                # Reindex garante que o retorno tenha exatamente o tamanho de siglas_match
+                return df_tab_idx[col_name].reindex(siglas_match).fillna(0).values
+            return np.zeros(n_linhas)
         
-        f_peso = np.zeros(len(df_base)); v_kg_adic = np.zeros(len(df_base))
+        f_peso = np.zeros(n_linhas)
+        v_kg_adic = np.zeros(n_linhas)
         mask_atendida = (siglas_match != "ND")
         
+        # Cálculo das faixas de peso
         for faixa in m['faixas']:
             v_f = get_v(faixa['col'])
+            # Correção do erro: Garante que as máscaras booleanas tenham o tamanho correto
             mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0) & mask_atendida
             f_peso[mask] = v_f[mask]
             
+        # Excedente (Kg Adicional)
         u_max = m['faixas'][-1]['max']
         mask_e = (pesos_notas > u_max) & mask_atendida
         if mask_e.any():
-            v_b = get_v(m['faixas'][-1]['col']); v_ex = get_v(m['kg_extra'])
+            v_b = get_v(m['faixas'][-1]['col'])
+            v_ex = get_v(m['kg_extra'])
             v_kg_adic[mask_e] = (pesos_notas[mask_e] - u_max) * v_ex[mask_e]
             f_peso[mask_e] = v_b[mask_e] + v_kg_adic[mask_e]
         
+        # Cálculo de Taxas
         adv = np.maximum(valores_notas * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
         grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
         emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
@@ -130,11 +143,13 @@ def engine_calculo(df_base, selecionadas, df_ts):
         tda = np.maximum(valores_notas * get_v(m['taxas'].get("TDA %")), get_v(m['taxas'].get("TDA Min")))
         despacho = get_v(m['taxas'].get("Despacho"))
         
-        frete_parcial = (f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + suf + seccat + fluv + red_f + tda + despacho)
+        frete_parcial = (f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + 
+                         get_v(m['taxas'].get("CTRC")) + suf + seccat + fluv + red_f + tda + despacho)
+        
         trt = frete_parcial * get_v(m['taxas'].get("TRT %"))
-
         frete_total = (frete_parcial + trt) * mask_atendida
 
+        # Colunas de saída
         df_final[f'PESO_BASE_{t_nome}'] = (f_peso - v_kg_adic) * mask_atendida
         df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic * mask_atendida
         df_final[f'ADVAL_{t_nome}'] = adv * mask_atendida
@@ -151,6 +166,7 @@ def engine_calculo(df_base, selecionadas, df_ts):
         df_final[f'DESPACHO_{t_nome}'] = despacho * mask_atendida
         df_final[f'TRT_{t_nome}'] = trt * mask_atendida
         df_final[f'TOTAL_{t_nome}'] = frete_total
+
     return df_final
 
 def to_excel(df_completo):
