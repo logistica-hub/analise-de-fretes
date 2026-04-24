@@ -266,24 +266,48 @@ elif menu == "💰 Comparativo":
                 except Exception: st.error("Erro ao salvar histórico.")
     else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
 
-    # HISTÓRICO ORIGINAL 17.5 CORRIGIDO
-    st.divider(); res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
+   # HISTÓRICO - VERSÃO 18.0 COM TRAVA DE SEGURANÇA
+    st.divider()
+    res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     if res_h.data:
         df_hist_raw = pd.DataFrame(res_h.data)
         for t_ref, g in df_hist_raw.groupby("data_hora", sort=False):
             det = []
+            # Trava de segurança para ler o JSON do banco
             for d in g['detalhes_json']:
-                if isinstance(d, list): det.extend(d)
-                else: det.append(d)
-            df_det = pd.DataFrame(det)
+                if isinstance(d, list): 
+                    det.extend(d)
+                elif isinstance(d, dict):
+                    det.append(d)
+            
+            # Se det estiver vazio ou inválido, criamos um DataFrame vazio para não travar
+            df_det = pd.DataFrame(det) if det else pd.DataFrame()
+            
             with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
-                cols_totais = [c for c in df_det.columns if c.startswith("TOTAL_")]
-                c_btn1, c_btn2 = st.columns(2)
-                c_btn1.download_button(f"📥 Baixar Relatório Multi-Abas", data=to_excel(df_det), file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx")
-                if c_btn2.button("🗑️ Remover Registro", key=f"del_{t_ref}"):
-                    for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
+                # Verificamos se o DataFrame tem colunas antes de processar
+                if not df_det.empty:
+                    cols_totais = [c for c in df_det.columns if str(c).startswith("TOTAL_")]
+                    c_btn1, c_btn2 = st.columns(2)
+                    
+                    c_btn1.download_button(
+                        f"📥 Baixar Relatório Multi-Abas", 
+                        data=to_excel(df_det), 
+                        file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx",
+                        key=f"dl_{g['id'].iloc[0]}" # Key única para evitar erro de ID duplicado
+                    )
+                else:
+                    st.warning("Este registro antigo contém dados incompatíveis.")
+                    c_btn1, c_btn2 = st.columns(2)
+
+                # O botão de remover agora fica fora do IF dos dados, 
+                # permitindo que você exclua o registro ruim!
+                if c_btn2.button("🗑️ Remover Registro", key=f"del_{g['id'].iloc[0]}"):
+                    for rid in g['id']:
+                        supabase.table("cotacoes").delete().eq("id", rid).execute()
                     st.rerun()
-                resumo = df_det[cols_totais].sum().reset_index()
-                resumo.columns = ['Transportadora', 'Frete Total']
-                resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
-                st.table(resumo.style.format({'Frete Total': format_brl}))
+                
+                if not df_det.empty and cols_totais:
+                    resumo = df_det[cols_totais].sum().reset_index()
+                    resumo.columns = ['Transportadora', 'Frete Total']
+                    resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
+                    st.table(resumo.style.format({'Frete Total': format_brl}))
