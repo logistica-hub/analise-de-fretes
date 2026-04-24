@@ -365,23 +365,29 @@ elif menu == "🧮 Cotação":
                         
                         ranking = sorted(ranking, key=lambda x: x['total'] if x['total'] > 0 else 999999)
 
-                        # Mapeamento de todas as taxas
+                        # Mapeamento de todas as taxas (Garanta que os nomes em MAIÚSCULO batam com sua engine)
                         mapeamento_taxas = {
-                            "FRETE_PESO": "Frete Peso", "FRETE_EXCEDENTE": "Frete Excedente",
-                            "AD_VALOREM_PERC": "Ad Valorem %", "CTRC": "CTRC",
-                            "GRIS_MIN": "Gris Min", "SUFRAMA": "Suframa",
-                            "REDESPACHO_FLUVIAL": "Redespacho Fluvial", "DESPACHO": "Despacho",
-                            "AD_VALOREM_MIN": "Ad Valorem Min", "PEDAGIO": "Pedágio",
-                            "EMEX_PERC": "Emex %", "SEC_CAT": "SEC-CAT",
-                            "TDA_PERC": "TDA %", "TRT_PERC": "TRT %",
-                            "TAS": "TAS", "GRIS_PERC": "Gris %",
-                            "EMEX_MIN": "Emex Min", "FLUVIAL": "Fluvial", "TDA_MIN": "TDA Min"
+                            "FRETE_PESO": "Frete Peso",
+                            "FRETE_EXCEDENTE": "KG Adicional",
+                            "AD_VALOREM_PERC": "Ad Valorem %",
+                            "AD_VALOREM_MIN": "Ad Valorem Min",
+                            "GRIS_PERC": "Gris %",
+                            "GRIS_MIN": "Gris Min",
+                            "PEDAGIO": "Pedágio",
+                            "CTRC": "CTRC",
+                            "TAS": "TAS",
+                            "SEC_CAT": "SEC-CAT",
+                            "DESPACHO": "Despacho",
+                            "TDA_MIN": "TDA Min",
+                            "TRT_PERC": "TRT %",
+                            "EMEX_MIN": "Emex Min",
+                            "SUFRAMA": "Suframa"
                         }
 
                         for item in ranking:
                             t_nome = item['transp']
                             if item['total'] > 0:
-                                # CARD COMPACTO: Reduzi padding de 15px para 8px e as fontes
+                                # Card Visual
                                 st.markdown(f"""
                                 <div style="background-color: #ffffff; padding: 8px 15px; border-radius: 8px; border-left: 4px solid #10b981; margin-bottom: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
                                     <div>
@@ -395,26 +401,29 @@ elif menu == "🧮 Cotação":
                                 </div>
                                 """, unsafe_allow_html=True)
 
-                                # DETALHAMENTO COMPACTO
+                                # Detalhamento
                                 detalhes_exibir = []
                                 for col_key, label in mapeamento_taxas.items():
                                     col_full = f"{col_key}_{t_nome}"
                                     if col_full in res_calc.columns:
                                         v = res_calc[col_full].iloc[0]
                                         if v > 0:
-                                            # Texto das taxas menor dentro do expander
-                                            detalhes_exibir.append(f"<small>**{label}:** {format_brl(v)}</small>")
+                                            # Se for Frete Peso ou KG Adicional, coloco em negrito extra para destacar
+                                            if col_key in ["FRETE_PESO", "FRETE_EXCEDENTE"]:
+                                                detalhes_exibir.append(f"<div style='font-size: 0.85rem; margin-bottom: 5px;'><b>{label}: {format_brl(v)}</b></div>")
+                                            else:
+                                                detalhes_exibir.append(f"<div style='font-size: 0.8rem; color: #334155;'>{label}: {format_brl(v)}</div>")
 
                                 if detalhes_exibir:
                                     with st.expander(f"🔍 Detalhes - {t_nome}"):
                                         for linha in detalhes_exibir:
                                             st.markdown(linha, unsafe_allow_html=True)
-                                        st.markdown(f"<hr style='margin: 5px 0;'><small><b>Final: {format_brl(item['total'])}</b></small>", unsafe_allow_html=True)
+                                        st.markdown(f"<hr style='margin: 5px 0;'><b style='font-size: 0.9rem;'>Final: {format_brl(item['total'])}</b>", unsafe_allow_html=True)
                             else:
                                 st.warning(f"🚫 {t_nome}: Sem atendimento.")
                                     
                     except Exception as e:
-                        st.error(f"Erro: {e}")
+                        st.error(f"Erro no cálculo: {e}")
 
 # --- BASE DE NOTAS ---
 elif menu == "📂 Base de Notas":
