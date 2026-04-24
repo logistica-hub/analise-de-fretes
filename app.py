@@ -10,7 +10,7 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS Original do Usuário (Versão 17.5)
+# CSS Original do Usuário (Versão 18.0)
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -84,8 +84,8 @@ def to_excel(df_completo):
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.title("Ave Maria")
-    st.info("Versão 17.5")
+    st.title("Ave Maria - Analise de Fretes")
+    st.info("Versão 18.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -257,7 +257,7 @@ elif menu == "🚛 Cadastro de Transportadora":
 
 # --- COMPARATIVO ATUALIZADO COM BARRA DE PROGRESSO E LOTES ---
 elif menu == "💰 Comparativo":
-    st.title("💰 Comparativo Massivo")
+    st.title("💰 Cotação de Fretes")
     res_base = supabase.table("base_comercial").select("*").execute()
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
@@ -336,7 +336,7 @@ elif menu == "💰 Comparativo":
                 for i in range(0, len(dados_completos), tamanho_lote):
                     lote = dados_completos[i:i + tamanho_lote]
                     lote_num = (i // tamanho_lote) + 1
-                    status_text.text(f"💾 Salvando lote {lote_num} de {total_lotes}...")
+                    status_text.text(f"💾 Cotando {lote_num} de {total_lotes}...")
                     
                     supabase.table("cotacoes").insert({
                         "data_hora": data_sao_paulo, 
