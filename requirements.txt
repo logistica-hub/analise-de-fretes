@@ -4,3 +4,4 @@ supabase
 numpy
 xlsxwriter
 openpyxl
+streamlit-option-menu
