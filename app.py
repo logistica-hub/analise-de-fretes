@@ -172,17 +172,16 @@ def to_excel(df_completo):
             df_t.to_excel(writer, index=False, sheet_name=t[:31])
     return output.getvalue()
 
-# --- SIDEBAR ATUALIZADA (LOGO MENOR + MENU SEPARADO) ---
+# --- SIDEBAR ATUALIZADA ---
 with st.sidebar:
     st.title("Ave Maria")
     
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     
     if st.session_state.logo_data:
-        # Colunas para centralizar e diminuir o logo
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
         with col_l2:
-            st.image(st.session_state.logo_data, width=100) # Define a largura fixa menor
+            st.image(st.session_state.logo_data, width=100)
         
         if st.button("✏️ Alterar Logo", use_container_width=True):
             st.session_state.logo_data = None
@@ -195,39 +194,25 @@ with st.sidebar:
     
     st.divider()
     
-    # Menu Principal
-    menu = st.radio(
-        "Navegação Principal", 
-        ["📊 Dashboard", "🧮 Calculadora Rápida", "🚛 Cadastro de Transportadora", "💰 Comparativo"]
-    )
-
-    # Espaçamento para separar os itens de baixo
-    st.markdown("<br><hr><br>", unsafe_allow_html=True)
+    # Lista única de navegação para evitar erros de atualização
+    menu_opcoes = [
+        "📊 Dashboard", 
+        "🧮 Cotação", 
+        "🚛 Cadastro de Transportadora", 
+        "💰 Calculo de Comparativo",
+        "---", # Separador Visual
+        "📂 Base de Notas", 
+        "📜 Historico de Comparativos"
+    ]
     
-    # Menu Secundário (Atribui o valor à mesma variável 'menu')
-    menu_extra = st.radio(
-        "📁 Gestão de Dados",
-        ["📂 Base Comercial", "📜 Histórico"]
-    )
+    escolha = st.radio("Navegação", menu_opcoes)
     
-    # Lógica simples: Se o usuário interagir com o menu de baixo, ele sobrescreve o 'menu'
-    # Para que os seus 'ifs' lá embaixo continuem funcionando sem mexer em nada:
-    if menu_extra:
-        # Este pequeno bloco garante que o Streamlit saiba qual seção exibir
-        # baseando-se no último clique (funciona via query params ou estado)
-        pass 
-
-    # --- ATENÇÃO --- 
-    # Para manter seu código funcionando sem mexer em mais NADA, 
-    # substitua a variável 'menu' por esta lógica final:
-    # (O Streamlit redesenha a tela a cada clique, então o valor selecionado manda)
-    
-    # Se quiser que o de baixo mande quando clicado, você pode unificar os menus.
-    # Mas como você pediu pra mudar só um bloco, a melhor forma é manter 
-    # um único radio com divisores "invisíveis" (opções de texto):
-    
-    # VOU SIMPLIFICAR PARA VOCÊ NO RÁDIO ÚNICO (Visual de separado, lógica inalterada):
-    st.sidebar.empty() # Limpa o buffer
+    # Lógica para tratar o separador e unificar a variável menu
+    if escolha == "---":
+        st.info("Selecione uma opção acima ou abaixo.")
+        menu = "📊 Dashboard"
+    else:
+        menu = escolha
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
@@ -318,12 +303,11 @@ if menu == "📊 Dashboard":
                     st.dataframe(df_pivot.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
     else: st.info("Sem histórico de cotações para exibir.")
 
-# --- CALCULADORA RÁPIDA ---
-elif menu == "🧮 Calculadora Rápida":
-    st.title("🧮 Calculadora de Frete Unitário")
+# --- COTAÇÃO (ANTIGA CALCULADORA RÁPIDA) ---
+elif menu == "🧮 Cotação":
+    st.title("🧮 Cotação")
     st.info("Simule uma cotação rápida. Os dados preenchidos aqui não são salvos no banco de dados.")
     
-    # Busca as transportadoras cadastradas para o usuário escolher
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
 
@@ -347,7 +331,6 @@ elif menu == "🧮 Calculadora Rápida":
             if not cid_input or not transp_selecionadas:
                 st.error("Por favor, informe a cidade e selecione ao menos uma transportadora.")
             else:
-                # Criamos um DataFrame de uma linha para o motor de cálculo entender
                 df_simulado = pd.DataFrame([{
                     "CIDADE": cid_input,
                     "UF": uf_input,
@@ -355,26 +338,20 @@ elif menu == "🧮 Calculadora Rápida":
                     "VALOR": valor_input
                 }])
 
-                # Rodamos o motor de cálculo apenas em memória
                 with st.spinner("Calculando..."):
                     try:
                         res_calc = engine_calculo(df_simulado, transp_selecionadas, df_ts)
-                        
                         st.subheader("🏁 Comparativo de Preços")
-                        
-                        # Criar uma lista para ordenar por preço
                         ranking = []
                         for t in transp_selecionadas:
                             valor_total = res_calc[f'TOTAL_{t}'].iloc[0]
                             ranking.append({"transp": t, "total": valor_total})
                         
-                        # Ordena: Menor preço primeiro (mas joga frete zero/não atendido para o fim)
                         ranking = sorted(ranking, key=lambda x: x['total'] if x['total'] > 0 else 999999)
 
                         for item in ranking:
                             with st.container():
                                 if item['total'] > 0:
-                                    # Card de visualização rápida
                                     st.markdown(f"""
                                     <div style="background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #10b981; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
                                         <div>
@@ -392,16 +369,16 @@ elif menu == "🧮 Calculadora Rápida":
                     except Exception as e:
                         st.error(f"Erro ao calcular: {e}")
 
-# --- BASE COMERCIAL ---
-elif menu == "📂 Base Comercial":
-    st.title("📂 Gestão da Base Comercial")
+# --- BASE DE NOTAS ---
+elif menu == "📂 Base de Notas":
+    st.title("📂 Gestão da Base de Notas")
     up_base = st.file_uploader("Subir Base de Notas (Excel)", type=["xlsx"])
     if up_base:
         if st.button("💾 Salvar Base no Sistema"):
             df_base_nova = pd.read_excel(up_base).fillna(0)
             supabase.table("base_comercial").delete().neq("id", 0).execute()
             supabase.table("base_comercial").insert({"dados_json": df_base_nova.to_dict(orient='records')}).execute()
-            st.success("Base Comercial salva com sucesso!"); st.rerun()
+            st.success("Base de Notas salva com sucesso!"); st.rerun()
     res_b = supabase.table("base_comercial").select("id").execute()
     if res_b.data:
         st.info("✅ Existe uma base carregada e pronta para o cálculo.")
@@ -461,15 +438,15 @@ elif menu == "🚛 Cadastro de Transportadora":
             if c[1].button("✏️", key=f"ed{r['id']}"): st.session_state.edit_id = r['id']; st.rerun()
             if c[2].button("🗑️", key=f"dl{r['id']}"): supabase.table("transportadoras").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- COMPARATIVO ---
-elif menu == "💰 Comparativo":
+# --- CALCULO DE COMPARATIVO ---
+elif menu == "💰 Calculo de Comparativo":
     st.title("💰 Cotação de Fretes")
     res_base = supabase.table("base_comercial").select("*").execute()
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
     if res_base.data and not df_ts.empty:
         df_base = pd.DataFrame(res_base.data[0]['dados_json'])
-        st.info(f"Utilizando Base Comercial salva: {len(df_base)} notas.")
+        st.info(f"Utilizando Base de Notas salva: {len(df_base)} notas.")
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
             with st.spinner("Processando indicadores..."):
@@ -506,11 +483,11 @@ elif menu == "💰 Comparativo":
                 
                 supabase.table("cotacoes").insert({"data_hora": data_sp, "qtd": len(df_base), "detalhes_json": resumo_final}).execute()
                 st.success("Cálculo finalizado!"); st.rerun()
-    else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
+    else: st.warning("Cadastre a Base de Notas e as Transportadoras.")
 
-# --- HISTÓRICO ---
-elif menu == "📜 Histórico":
-    st.title("📜 Histórico de Cotações")
+# --- HISTORICO DE COMPARATIVOS ---
+elif menu == "📜 Historico de Comparativos":
+    st.title("📜 Historico de Comparativos")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     
     if res_h.data:
@@ -551,9 +528,10 @@ elif menu == "📜 Histórico":
                                 key=f"dl_ready_{r['id']}"
                             )
                         else:
-                            st.error("Base comercial original não encontrada.")
+                            st.error("Base original não encontrada.")
                 
                 if c2.button("🗑️ Remover", key=f"del_{r['id']}"):
                     supabase.table("cotacoes").delete().eq("id", r['id']).execute()
                     st.rerun()
-    else: st.info("Nenhuma cotação salva.")
+    else:
+        st.info("Nenhum histórico encontrado.")
