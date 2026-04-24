@@ -468,3 +468,77 @@ elif menu == "📜 Histórico":
                     supabase.table("cotacoes").delete().eq("id", r['id']).execute()
                     st.rerun()
     else: st.info("Nenhuma cotação salva.")
+
+# --- CALCULADORA RÁPIDA (COLE ESTE BLOCO NO SEU CÓDIGO) ---
+elif menu == "🧮 Calculadora Rápida":
+    st.title("🧮 Calculadora de Frete Unitário")
+    st.info("Simule uma cotação rápida. Os dados preenchidos aqui não são salvos no banco de dados.")
+    
+    # Busca as transportadoras cadastradas para o usuário escolher
+    res_t = supabase.table("transportadoras").select("*").execute()
+    df_ts = pd.DataFrame(res_t.data)
+
+    if df_ts.empty:
+        st.warning("Nenhuma transportadora cadastrada. Cadastre uma antes de usar a calculadora.")
+    else:
+        with st.form("form_calculadora_avulsa"):
+            col1, col2 = st.columns(2)
+            with col1:
+                cid_input = st.text_input("Cidade de Destino", placeholder="Ex: RIO DE JANEIRO")
+                peso_input = st.number_input("Peso Total (kg)", min_value=0.1, value=1.0, step=0.5)
+            with col2:
+                uf_input = st.selectbox("UF", ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"], index=18)
+                valor_input = st.number_input("Valor da Nota (R$)", min_value=0.0, value=0.0, step=100.0)
+            
+            transp_selecionadas = st.multiselect("Selecione as Transportadoras para comparar", df_ts['nome'].tolist())
+            
+            submit = st.form_submit_button("🚀 Calcular Frete")
+
+        if submit:
+            if not cid_input or not transp_selecionadas:
+                st.error("Por favor, informe a cidade e selecione ao menos uma transportadora.")
+            else:
+                # Criamos um DataFrame de uma linha para o motor de cálculo entender
+                df_simulado = pd.DataFrame([{
+                    "CIDADE": cid_input,
+                    "UF": uf_input,
+                    "PESO": peso_input,
+                    "VALOR": valor_input
+                }])
+
+                # Rodamos o motor de cálculo apenas em memória
+                with st.spinner("Calculando..."):
+                    try:
+                        res_calc = engine_calculo(df_simulado, transp_selecionadas, df_ts)
+                        
+                        st.subheader("🏁 Comparativo de Preços")
+                        
+                        # Criar uma lista para ordenar por preço
+                        ranking = []
+                        for t in transp_selecionadas:
+                            valor_total = res_calc[f'TOTAL_{t}'].iloc[0]
+                            ranking.append({"transp": t, "total": valor_total})
+                        
+                        # Ordena: Menor preço primeiro (mas joga frete zero/não atendido para o fim)
+                        ranking = sorted(ranking, key=lambda x: x['total'] if x['total'] > 0 else 999999)
+
+                        for item in ranking:
+                            with st.container():
+                                if item['total'] > 0:
+                                    # Card de visualização rápida
+                                    st.markdown(f"""
+                                    <div style="background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #10b981; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
+                                        <div>
+                                            <span style="color: #64748b; font-size: 0.8rem; font-weight: bold;">TRANSPORTADORA</span><br>
+                                            <b style="font-size: 1.1rem; color: #1e293b;">{item['transp']}</b>
+                                        </div>
+                                        <div style="text-align: right;">
+                                            <span style="color: #64748b; font-size: 0.8rem; font-weight: bold;">VALOR TOTAL</span><br>
+                                            <b style="font-size: 1.4rem; color: #059669;">{format_brl(item['total'])}</b>
+                                        </div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    st.warning(f"🚫 **{item['transp']}**: Não atende a região de {cid_input}-{uf_input} ou dados incompletos na tabela.")
+                    except Exception as e:
+                        st.error(f"Erro ao calcular: {e}")
