@@ -354,6 +354,10 @@ elif menu == "🧮 Cotação":
                 with st.spinner("Calculando..."):
                     try:
                         res_calc = engine_calculo(df_simulado, transp_selecionadas, df_ts)
+                        
+                        # --- LINHA PARA DEBUG (APAGUE DEPOIS) ---
+                        # st.write("Colunas encontradas:", res_calc.columns.tolist()) 
+
                         st.subheader("🏁 Comparativo de Preços")
                         
                         ranking = []
@@ -365,7 +369,7 @@ elif menu == "🧮 Cotação":
                         
                         ranking = sorted(ranking, key=lambda x: x['total'] if x['total'] > 0 else 999999)
 
-                        # Mapeamento de todas as taxas (Garanta que os nomes em MAIÚSCULO batam com sua engine)
+                        # MAPEAMENTO ATUALIZADO (Confirme se os nomes batem com sua engine)
                         mapeamento_taxas = {
                             "FRETE_PESO": "Frete Peso",
                             "FRETE_EXCEDENTE": "KG Adicional",
@@ -379,6 +383,7 @@ elif menu == "🧮 Cotação":
                             "SEC_CAT": "SEC-CAT",
                             "DESPACHO": "Despacho",
                             "TDA_MIN": "TDA Min",
+                            "TDA_PERC": "TDA %",
                             "TRT_PERC": "TRT %",
                             "EMEX_MIN": "Emex Min",
                             "SUFRAMA": "Suframa"
@@ -387,7 +392,7 @@ elif menu == "🧮 Cotação":
                         for item in ranking:
                             t_nome = item['transp']
                             if item['total'] > 0:
-                                # Card Visual
+                                # CARD PRINCIPAL COMPACTO
                                 st.markdown(f"""
                                 <div style="background-color: #ffffff; padding: 8px 15px; border-radius: 8px; border-left: 4px solid #10b981; margin-bottom: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
                                     <div>
@@ -395,30 +400,32 @@ elif menu == "🧮 Cotação":
                                         <b style="font-size: 0.9rem; color: #1e293b;">{t_nome}</b>
                                     </div>
                                     <div style="text-align: right;">
-                                        <span style="color: #64748b; font-size: 0.65rem; font-weight: bold; text-transform: uppercase;">Valor Total</span><br>
+                                        <span style="color: #64748b; font-size: 0.65rem; font-weight: bold; text-transform: uppercase;">Total</span><br>
                                         <b style="font-size: 1.1rem; color: #059669;">{format_brl(item['total'])}</b>
                                     </div>
                                 </div>
                                 """, unsafe_allow_html=True)
 
-                                # Detalhamento
+                                # DETALHAMENTO
                                 detalhes_exibir = []
+                                
+                                # 1. Primeiro buscamos as taxas do mapeamento
                                 for col_key, label in mapeamento_taxas.items():
                                     col_full = f"{col_key}_{t_nome}"
                                     if col_full in res_calc.columns:
                                         v = res_calc[col_full].iloc[0]
                                         if v > 0:
-                                            # Se for Frete Peso ou KG Adicional, coloco em negrito extra para destacar
-                                            if col_key in ["FRETE_PESO", "FRETE_EXCEDENTE"]:
-                                                detalhes_exibir.append(f"<div style='font-size: 0.85rem; margin-bottom: 5px;'><b>{label}: {format_brl(v)}</b></div>")
+                                            # Destaque para Frete Peso e Excedente
+                                            if "PESO" in col_key or "EXCEDENTE" in col_key:
+                                                detalhes_exibir.append(f"<div style='font-size: 0.85rem; color: #1e293b;'><b>{label}: {format_brl(v)}</b></div>")
                                             else:
-                                                detalhes_exibir.append(f"<div style='font-size: 0.8rem; color: #334155;'>{label}: {format_brl(v)}</div>")
+                                                detalhes_exibir.append(f"<div style='font-size: 0.8rem; color: #475569;'>{label}: {format_brl(v)}</div>")
 
                                 if detalhes_exibir:
                                     with st.expander(f"🔍 Detalhes - {t_nome}"):
                                         for linha in detalhes_exibir:
                                             st.markdown(linha, unsafe_allow_html=True)
-                                        st.markdown(f"<hr style='margin: 5px 0;'><b style='font-size: 0.9rem;'>Final: {format_brl(item['total'])}</b>", unsafe_allow_html=True)
+                                        st.markdown(f"<hr style='margin: 5px 0;'><b style='font-size: 0.85rem;'>Final: {format_brl(item['total'])}</b>", unsafe_allow_html=True)
                             else:
                                 st.warning(f"🚫 {t_nome}: Sem atendimento.")
                                     
