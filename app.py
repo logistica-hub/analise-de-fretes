@@ -176,14 +176,11 @@ def to_excel(df_completo):
 with st.sidebar:
     st.title("Ave Maria")
     
-    if 'logo_data' not in st.session_state: 
-        st.session_state.logo_data = None
-    
+    # --- LOGO ---
+    if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
-        with col_l2:
-            st.image(st.session_state.logo_data, width=100)
-        
+        with col_l2: st.image(st.session_state.logo_data, width=100)
         if st.button("✏️ Alterar Logo", use_container_width=True):
             st.session_state.logo_data = None
             st.rerun()
@@ -194,32 +191,49 @@ with st.sidebar:
             st.rerun()
     
     st.divider()
-    
-    # Lista atualizada conforme a imagem:
-    # "Calculo de Comparativo" foi movido para cima do separador e nomes padronizados
+
+    # --- CSS PARA TRANSFORMAR A OPÇÃO "---" EM UM RISCO REAL ---
+    st.markdown("""
+        <style>
+            /* Esconde a bolinha e o texto do item que contém "---" */
+            div[role="radiogroup"] > div:nth-child(5) {
+                pointer-events: none; /* Impede clique */
+                cursor: default;
+            }
+            div[role="radiogroup"] > div:nth-child(5) > label {
+                display: none; /* Esconde o rádio e o texto */
+            }
+            /* Adiciona uma linha no lugar do 5º item */
+            div[role="radiogroup"] > div:nth-child(5)::before {
+                content: "";
+                display: block;
+                height: 1px;
+                background-color: #4B4B4B; /* Cor da linha */
+                margin: 10px 0;
+                width: 100%;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Lista única (O "---" é o 5º item)
     menu_opcoes = [
         "📊 Dashboard", 
         "🧮 Cotação", 
         "🚛 Cadastro de Transportadora", 
-        "💰 Cálculo de Comparativo",  # Adicionado acento e mantido no grupo superior
-        "---",                        # Separador visual
-        "📁 Base de Notas",           # Ícone de pasta conforme imagem
-        "📜 Histórico de Comparativos" # Adicionado acento
+        "💰 Cálculo de Comparativo",
+        "---", # Este será transformado em linha pelo CSS acima
+        "📁 Base de Notas", 
+        "📜 Histórico de Comparativos"
     ]
-    
-    # Renderiza o rádio
+
+    # Renderiza como um único rádio (seleção perfeita)
     escolha = st.radio("Navegação", menu_opcoes)
-    
-    # Lógica para tratar o separador
+
+    # Se o usuário de alguma forma cair no "---", volta para o Dashboard
     if escolha == "---":
-        st.warning("Selecione uma opção válida.")
-        # Mantém a seleção anterior ou volta para o Dashboard para não quebrar a página
-        if 'menu' not in st.session_state:
-            st.session_state.menu = "📊 Dashboard"
-        menu = st.session_state.menu
+        menu = "📊 Dashboard"
     else:
         menu = escolha
-        st.session_state.menu = escolha
         
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
