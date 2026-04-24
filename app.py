@@ -48,7 +48,7 @@ st.markdown("""
 
 @st.cache_resource
 def init_connection():
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])                
 
 supabase = init_connection()
 
@@ -198,7 +198,7 @@ with st.sidebar:
     # Menu Principal
     menu = st.radio(
         "Navegação Principal", 
-        ["📊 Dashboard", "🧮 Calculadora Rápida", "🚛 Cadastro de Transportadora", "💰 Comparativo"]
+        ["📊 Dashboard", "🧮 Cotação", "🚛 Cadastro de Transportadora", "💰 Comparativo"]
     )
 
     # Espaçamento para separar os itens de baixo
