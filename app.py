@@ -10,7 +10,7 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS Original
+# CSS Original do Usuário (Versão 18.0)
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -84,7 +84,7 @@ def to_excel(df_completo):
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.title("Ave Maria")
+    st.title("Ave Maria - Analise de Fretes")
     st.info("Versão 18.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
@@ -98,17 +98,31 @@ with st.sidebar:
             st.session_state.logo_data = up_logo.read()
             st.rerun()
     st.divider()
+    # Adicionado "📜 Histórico" ao menu
     menu = st.radio("Navegação", ["📊 Dashboard", "📂 Base Comercial", "🚛 Cadastro de Transportadora", "💰 Comparativo", "📜 Histórico"])
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
+    
     st.markdown("""
         <style>
-        span[data-baseweb="tag"] { background-color: #f1f5f9 !important; border: 1px solid #e2e8f0 !important; border-radius: 6px !important; padding: 2px 8px !important; }
-        span[data-baseweb="tag"] span { color: #475569 !important; font-size: 12px !important; }
-        span[data-baseweb="tag"] [role="button"] svg { fill: #94a3b8 !important; }
-        div[data-testid="column"] { padding: 0 10px !important; }
+        span[data-baseweb="tag"] {
+            background-color: #f1f5f9 !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 6px !important;
+            padding: 2px 8px !important;
+        }
+        span[data-baseweb="tag"] span {
+            color: #475569 !important;
+            font-size: 12px !important;
+        }
+        span[data-baseweb="tag"] [role="button"] svg {
+            fill: #94a3b8 !important;
+        }
+        div[data-testid="column"] {
+            padding: 0 10px !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -195,20 +209,25 @@ elif menu == "🚛 Cadastro de Transportadora":
         df_a = pd.read_excel(f_abr).fillna(0) if f_abr else (pd.DataFrame(e_row['cidades_json']) if e_row is not None else None)
         if df_t is not None and df_a is not None:
             mapa = e_row['mapeamento_json'] if e_row is not None else {}
-            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]; cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
+            cols_t = ["Não mapear"] + [str(c) for c in df_t.columns]
+            cols_a = ["Não mapear"] + [str(c) for c in df_a.columns]
             cm1, cm2 = st.columns(2)
             with cm1:
+                st.markdown("### 📋 Configuração Tabela")
                 m_tb_sig = st.selectbox("Coluna Sigla (na Tabela)", cols_t, index=cols_t.index(mapa.get('tab_sigla')) if mapa.get('tab_sigla') in cols_t else 0)
                 m_tb_uf = st.selectbox("Coluna UF (na Tabela)", cols_t, index=cols_t.index(mapa.get('tab_uf')) if mapa.get('tab_uf') in cols_t else 0)
                 col_kg_ex = st.selectbox("Coluna Kg Adicional", cols_t, index=cols_t.index(mapa.get('kg_extra')) if mapa.get('kg_extra') in cols_t else 0)
             with cm2:
+                st.markdown("### 📍 Relação de Cidades")
                 m_ap_cid = st.selectbox("Coluna Cidade (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
                 m_ap_sig = st.selectbox("Coluna Sigla (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
+            st.divider(); st.markdown("### ⚖️ Mapeamento de Faixas de Peso")
             n_f = st.number_input("Qtd Faixas de Peso", 1, 50, len(mapa.get('faixas', [])) or 6)
             faixas = []
             for i in range(int(n_f)):
                 r = st.columns(3); f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
                 faixas.append({"min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")})
+            st.divider(); st.markdown("### 💰 Mapeamento de Taxas Adicionais")
             taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "Fluvial", "Redespacho Fluvial"]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
@@ -226,53 +245,92 @@ elif menu == "🚛 Cadastro de Transportadora":
 
 # --- COMPARATIVO ---
 elif menu == "💰 Comparativo":
-    st.title("💰 Comparativo Massivo")
+    st.title("💰 Cotação de Fretes")
     res_base = supabase.table("base_comercial").select("*").execute()
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
+
     if res_base.data and not df_ts.empty:
         df_base = pd.DataFrame(res_base.data[0]['dados_json'])
-        st.info(f"Base Comercial: {len(df_base)} notas.")
+        st.info(f"Utilizando Base Comercial salva: {len(df_base)} notas.")
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
+        
         if selecionadas and st.button("🚀 Calcular"):
-            prog = st.progress(0); stat = st.empty(); df_final = df_base.copy()
-            col_cid = next((c for c in df_base.columns if 'CIDADE' in c.upper()), df_base.columns[2])
-            col_peso = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
-            col_val = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
-            cid_n = df_base[col_cid].astype(str).apply(super_limpeza).values
-            pesos_n = pd.to_numeric(df_base[col_peso], errors='coerce').fillna(0).values
-            vals_n = pd.to_numeric(df_base[col_val], errors='coerce').fillna(0).values
+            progresso_bar = st.progress(0)
+            status_text = st.empty()
+            total_tr = len(selecionadas)
+            df_final = df_base.copy()
+            
+            col_cid_nome = next((c for c in df_base.columns if 'CIDADE' in c.upper()), df_base.columns[2])
+            col_peso_nome = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
+            col_valor_nome = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
+            
+            cid_notas = df_base[col_cid_nome].astype(str).apply(super_limpeza).values
+            pesos_notas = pd.to_numeric(df_base[col_peso_nome], errors='coerce').fillna(0).values
+            valores_notas = pd.to_numeric(df_base[col_valor_nome], errors='coerce').fillna(0).values
+
             for idx, t_nome in enumerate(selecionadas):
-                prog.progress(idx / len(selecionadas)); stat.text(f"Calculando: {t_nome}")
-                t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]; m = t_r['mapeamento_json']
-                df_tab = pd.DataFrame(t_r['tabela_json']); df_abr = pd.DataFrame(t_r['cidades_json'])
-                df_abr['cid_c'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
-                dic_p = df_abr.set_index('cid_c')[m['ap_sigla']].astype(str).apply(super_limpeza).to_dict()
-                sig_m = pd.Series(cid_n).map(dic_p).fillna("ND").values
-                df_tab['sig_c'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza); df_tab_i = df_tab.set_index('sig_c')
-                def get_v(c): return df_tab_i[c].reindex(sig_m).fillna(0).values if c and c != "Não mapear" and c in df_tab_i.columns else np.zeros(len(df_base))
-                f_p = np.zeros(len(df_base)); v_ka = np.zeros(len(df_base))
-                for f in m['faixas']:
-                    v_f = get_v(f['col']); mask = (pesos_n <= f['max']) & (f_p == 0.0); f_p[mask] = v_f[mask]
-                u_m = m['faixas'][-1]['max']; mask_e = (pesos_n > u_m)
+                percentual = (idx) / total_tr
+                progresso_bar.progress(percentual)
+                status_text.text(f"Calculando frete: {t_nome} ({idx + 1}/{total_tr})")
+
+                t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
+                m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
+                
+                df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
+                dic_ponte = df_abr.set_index('cid_clean')[m['ap_sigla']].astype(str).apply(super_limpeza).to_dict()
+                siglas_match = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
+                df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza)
+                df_tab_idx = df_tab.set_index('sig_clean')
+                
+                def get_v(col): return df_tab_idx[col].reindex(siglas_match).fillna(0).values if col and col != "Não mapear" and col in df_tab_idx.columns else np.zeros(len(df_base))
+                
+                f_peso = np.zeros(len(df_base)); v_kg_adic = np.zeros(len(df_base))
+                for faixa in m['faixas']:
+                    v_f = get_v(faixa['col']); mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0); f_peso[mask] = v_f[mask]
+                u_max = m['faixas'][-1]['max']; mask_e = (pesos_notas > u_max)
                 if mask_e.any():
                     v_b = get_v(m['faixas'][-1]['col']); v_ex = get_v(m['kg_extra'])
-                    v_ka[mask_e] = (pesos_n[mask_e] - u_m) * v_ex[mask_e]; f_p[mask_e] = v_b[mask_e] + v_ka[mask_e]
-                adv = np.maximum(vals_n * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
-                grs = np.maximum(vals_n * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
-                emx = np.maximum(vals_n * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
-                ped = np.ceil(pesos_n/100) * get_v(m['taxas'].get("Pedagio"))
-                df_final[f'PESO_BASE_{t_nome}'], df_final[f'KG_ADIC_{t_nome}'], df_final[f'ADVAL_{t_nome}'], df_final[f'GRIS_{t_nome}'], df_final[f'EMEX_{t_nome}'], df_final[f'PEDAGIO_{t_nome}'], df_final[f'TAS_{t_nome}'], df_final[f'CTRC_{t_nome}'] = f_p-v_ka, v_ka, adv, grs, emx, ped, get_v(m['taxas'].get("TAS")), get_v(m['taxas'].get("CTRC"))
-                df_final[f'OUTROS_{t_nome}'] = (vals_n * get_v(m['taxas'].get("Suframa"))) + (vals_n * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
-                df_final[f'TOTAL_{t_nome}'] = f_p + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + df_final[f'OUTROS_{t_nome}']
-            prog.progress(1.0); stat.text("💾 Salvando em lotes..."); data_sp = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M")
-            dados = df_final.fillna(0).to_dict(orient='records'); tam = 2000
-            for i in range(0, len(dados), tam):
-                supabase.table("cotacoes").insert({"data_hora": data_sp, "qtd": len(dados[i:i+tam]), "detalhes_json": dados[i:i+tam]}).execute()
-            st.success("Cálculo Salvo!"); st.rerun()
-    else: st.warning("Cadastre a Base e as Transportadoras.")
+                    v_kg_adic[mask_e] = (pesos_notas[mask_e] - u_max) * v_ex[mask_e]
+                    f_peso[mask_e] = v_b[mask_e] + v_kg_adic[mask_e]
+                
+                adv = np.maximum(valores_notas * get_v(m['taxas'].get("Ad Valorem %")), get_v(m['taxas'].get("Ad Valorem Min")))
+                grs = np.maximum(valores_notas * get_v(m['taxas'].get("Gris %")), get_v(m['taxas'].get("Gris Min")))
+                emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
+                ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
+                
+                df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
+                df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
+                df_final[f'ADVAL_{t_nome}'] = adv
+                df_final[f'GRIS_{t_nome}'] = grs
+                df_final[f'EMEX_{t_nome}'] = emx
+                df_final[f'PEDAGIO_{t_nome}'] = ped
+                df_final[f'TAS_{t_nome}'] = get_v(m['taxas'].get("TAS"))
+                df_final[f'CTRC_{t_nome}'] = get_v(m['taxas'].get("CTRC"))
+                df_final[f'OUTROS_{t_nome}'] = (valores_notas * get_v(m['taxas'].get("Suframa"))) + (valores_notas * get_v(m['taxas'].get("Fluvial"))) + get_v(m['taxas'].get("Redespacho Fluvial"))
+                df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + df_final[f'OUTROS_{t_nome}']
 
-# --- HISTÓRICO (AGORA EM ABA PRÓPRIA) ---
+            progresso_bar.progress(1.0)
+            
+            try:
+                data_sao_paulo = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M")
+                dados_completos = df_final.fillna(0).to_dict(orient='records')
+                tamanho_lote = 2000
+                total_lotes = (len(dados_completos) // tamanho_lote) + 1
+                
+                for i in range(0, len(dados_completos), tamanho_lote):
+                    lote = dados_completos[i:i + tamanho_lote]
+                    lote_num = (i // tamanho_lote) + 1
+                    status_text.text(f"💾 Cotando {lote_num} de {total_lotes}...")
+                    supabase.table("cotacoes").insert({"data_hora": data_sao_paulo, "qtd": len(lote), "detalhes_json": lote}).execute()
+                
+                st.success(f"Cotação de {len(df_base)} linhas salva com sucesso!")
+                st.rerun()
+            except Exception as e: 
+                st.error(f"Erro ao salvar histórico: {e}")
+    else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
+
+# --- HISTÓRICO (AGORA DENTRO DE UMA ABA EXCLUSIVA) ---
 elif menu == "📜 Histórico":
     st.title("📜 Histórico de Cotações")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
@@ -283,18 +341,36 @@ elif menu == "📜 Histórico":
             for d in g['detalhes_json']:
                 if isinstance(d, list): det.extend(d)
                 elif isinstance(d, dict): det.append(d)
+            
             df_det = pd.DataFrame(det) if det else pd.DataFrame()
+            
             with st.expander(f"📦 {t_ref} | {len(df_det)} Notas"):
                 if not df_det.empty:
                     cols_totais = [c for c in df_det.columns if str(c).startswith("TOTAL_")]
-                    c1, c2 = st.columns(2)
-                    c1.download_button(f"📥 Baixar Relatório", data=to_excel(df_det), file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx", key=f"dl_{g['id'].iloc[0]}")
-                    if c2.button("🗑️ Remover", key=f"del_{g['id'].iloc[0]}"):
-                        for rid in g['id']: supabase.table("cotacoes").delete().eq("id", rid).execute()
+                    c_btn1, c_btn2 = st.columns(2)
+                    
+                    c_btn1.download_button(
+                        f"📥 Baixar Relatório Multi-Abas", 
+                        data=to_excel(df_det), 
+                        file_name=f"Cotacao_{t_ref.replace('/','-')}.xlsx",
+                        key=f"dl_{g['id'].iloc[0]}"
+                    )
+                    
+                    if c_btn2.button("🗑️ Remover Registro", key=f"del_{g['id'].iloc[0]}"):
+                        for rid in g['id']:
+                            supabase.table("cotacoes").delete().eq("id", rid).execute()
                         st.rerun()
-                    if cols_totais:
+                    
+                    if not df_det.empty and cols_totais:
                         resumo = df_det[cols_totais].sum().reset_index()
-                        resumo.columns = ['Transportadora', 'Total']; resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
-                        st.table(resumo.style.format({'Total': format_brl}))
-                else: st.warning("Dados incompatíveis.")
-    else: st.info("Nenhuma cotação salva no histórico.")
+                        resumo.columns = ['Transportadora', 'Frete Total']
+                        resumo['Transportadora'] = resumo['Transportadora'].str.replace("TOTAL_", "")
+                        st.table(resumo.style.format({'Frete Total': format_brl}))
+                else:
+                    st.warning("Registro antigo contém dados incompatíveis.")
+                    if st.button("🗑️ Remover Registro Corrompido", key=f"del_err_{g['id'].iloc[0]}"):
+                        for rid in g['id']:
+                            supabase.table("cotacoes").delete().eq("id", rid).execute()
+                        st.rerun()
+    else:
+        st.info("Nenhuma cotação salva no histórico.")
