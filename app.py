@@ -143,7 +143,7 @@ def to_excel(df_completo):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave Maria - Analise de Fretes")
-    st.info("Versão 22.0")
+    st.info("Versão 22.1")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -158,7 +158,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("Navegação", ["📊 Dashboard", "📂 Base Comercial", "🚛 Cadastro de Transportadora", "💰 Comparativo", "📜 Histórico"])
 
-# --- DASHBOARD COM FILTROS OTIMIZADOS ---
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     
@@ -197,14 +197,11 @@ if menu == "📊 Dashboard":
             
             with st.container():
                 f1, f2 = st.columns([2, 2])
-                
                 sel_tr = f1.multiselect("🚛 Transportadoras", nomes_t, default=nomes_t)
-                
                 col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
                 lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
                 sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
             
-            # --- Aplicação dos Filtros ---
             df_filt = df_total.copy()
             if 'transportadora' in df_filt.columns:
                 df_filt = df_filt[df_filt['transportadora'].isin(sel_tr)]
@@ -214,10 +211,8 @@ if menu == "📊 Dashboard":
             if not df_filt.empty:
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), 'valor_total_notas')
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
-                
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), 'peso_total')
                 peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
-                
                 col_frete = next((c for c in df_filt.columns if 'VALOR_TOTAL_FRETE' in c.upper()), None)
                 if col_frete:
                     val_total_frete = df_filt[col_frete].sum()
@@ -227,7 +222,6 @@ if menu == "📊 Dashboard":
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
-                
                 qtd_notas = df_filt['qtd'].sum() if 'qtd' in df_filt.columns else len(df_filt)
                 
                 with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{int(qtd_notas)}</div></div>', unsafe_allow_html=True)
@@ -237,7 +231,6 @@ if menu == "📊 Dashboard":
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.subheader("💰 Melhor Custo por Estado")
-                
                 if col_uf:
                     if 'transportadora' in df_filt.columns:
                         df_pivot = df_filt.pivot_table(index=col_uf, columns='transportadora', values='valor_total_frete', aggfunc='sum').fillna(0)
@@ -342,7 +335,6 @@ elif menu == "💰 Comparativo":
                 col_data_nf = next((c for c in df_base.columns if 'DATA' in c.upper() or 'EMISSAO' in c.upper()), None)
                 
                 meses_br = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
-                
                 resumo_final = []
                 for t in selecionadas:
                     agrupadores = [col_uf]
@@ -366,19 +358,15 @@ elif menu == "💰 Comparativo":
                             "lista_t": selecionadas
                         })
                 
-                supabase.table("cotacoes").insert({
-                    "data_hora": data_sp, 
-                    "qtd": len(df_base), 
-                    "detalhes_json": resumo_final
-                }).execute()
-                st.success("Cálculo finalizado!")
-                st.rerun()
+                supabase.table("cotacoes").insert({"data_hora": data_sp, "qtd": len(df_base), "detalhes_json": resumo_final}).execute()
+                st.success("Cálculo finalizado!"); st.rerun()
     else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
 
-# --- HISTÓRICO ---
+# --- HISTÓRICO (COM CÁLCULO SOB DEMANDA) ---
 elif menu == "📜 Histórico":
     st.title("📜 Histórico de Cotações")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
+    
     if res_h.data:
         for r in res_h.data:
             dt = r['data_hora']
@@ -387,6 +375,7 @@ elif menu == "📜 Histórico":
             qtd_total_h = r['qtd']
             
             with st.expander(f"📅 {dt}  |  📦 {qtd_total_h} Notas  |  💰 {format_brl(total_frete_h)}"):
+                # 1. MOSTRAR APENAS O CONSOLIDADO (Leve)
                 df_h = pd.DataFrame(detalhes)
                 consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
                 
@@ -397,23 +386,29 @@ elif menu == "📜 Histórico":
                 st.divider()
                 c1, c2 = st.columns([3, 1])
                 
-                res_b = supabase.table("base_comercial").select("*").execute()
-                if res_b.data:
-                    df_base_exp = pd.DataFrame(res_b.data[0]['dados_json'])
-                    t_usadas = df_h['lista_t'].iloc[0]
-                    res_t_exp = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
-                    df_ts_exp = pd.DataFrame(res_t_exp.data)
-                    
-                    df_detalhado = engine_calculo(df_base_exp, t_usadas, df_ts_exp)
-                    excel_data = to_excel(df_detalhado)
-                    
-                    c1.download_button(
-                        label="📥 Exportar Cotação Excel",
-                        data=excel_data,
-                        file_name=f"Cotacao_{dt.replace('/','-').replace(':','-')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key=f"btn_dl_{r['id']}"
-                    )
+                # Botão para preparar o cálculo detalhado apenas se o usuário quiser baixar
+                if c1.button("🛠️ Preparar Download Detalhado", key=f"prep_{r['id']}"):
+                    with st.spinner("Processando base completa para exportação... Isso pode levar alguns segundos."):
+                        res_b = supabase.table("base_comercial").select("*").execute()
+                        if res_b.data:
+                            df_base_exp = pd.DataFrame(res_b.data[0]['dados_json'])
+                            t_usadas = df_h['lista_t'].iloc[0]
+                            res_t_exp = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
+                            df_ts_exp = pd.DataFrame(res_t_exp.data)
+                            
+                            # Roda o cálculo apenas agora!
+                            df_detalhado = engine_calculo(df_base_exp, t_usadas, df_ts_exp)
+                            excel_data = to_excel(df_detalhado)
+                            
+                            st.download_button(
+                                label="📥 Clique aqui para Baixar Excel",
+                                data=excel_data,
+                                file_name=f"Cotacao_{dt.replace('/','-').replace(':','-')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"dl_ready_{r['id']}"
+                            )
+                        else:
+                            st.error("Base comercial original não encontrada para recalcular o detalhado.")
                 
                 if c2.button("🗑️ Remover", key=f"del_{r['id']}"):
                     supabase.table("cotacoes").delete().eq("id", r['id']).execute()
