@@ -327,12 +327,11 @@ elif menu == "🧮 Cotação":
     st.title("🧮 Cotação")
     st.info("Simule uma cotação rápida. Os dados preenchidos aqui não são salvos no banco de dados.")
     
-    # Busca transportadoras no Supabase
     res_t = supabase.table("transportadoras").select("*").execute()
     df_ts = pd.DataFrame(res_t.data)
 
     if df_ts.empty:
-        st.warning("Nenhuma transportadora cadastrada. Cadastre uma antes de usar a calculadora.")
+        st.warning("Nenhuma transportadora cadastrada.")
     else:
         with st.form("form_calculadora_avulsa"):
             col1, col2 = st.columns(2)
@@ -343,28 +342,20 @@ elif menu == "🧮 Cotação":
                 uf_input = st.selectbox("UF", ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"], index=18)
                 valor_input = st.number_input("Valor da Nota (R$)", min_value=0.0, value=0.0, step=100.0)
             
-            transp_selecionadas = st.multiselect("Selecione as Transportadoras para comparar", df_ts['nome'].tolist())
-            
+            transp_selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
             submit = st.form_submit_button("🚀 Calcular Frete")
 
         if submit:
             if not cid_input or not transp_selecionadas:
-                st.error("Por favor, informe a cidade e selecione ao menos uma transportadora.")
+                st.error("Preencha os campos obrigatórios.")
             else:
-                df_simulado = pd.DataFrame([{
-                    "CIDADE": cid_input,
-                    "UF": uf_input,
-                    "PESO": peso_input,
-                    "VALOR": valor_input
-                }])
+                df_simulado = pd.DataFrame([{"CIDADE": cid_input, "UF": uf_input, "PESO": peso_input, "VALOR": valor_input}])
 
                 with st.spinner("Calculando..."):
                     try:
-                        # Executa o motor de cálculo
                         res_calc = engine_calculo(df_simulado, transp_selecionadas, df_ts)
                         st.subheader("🏁 Comparativo de Preços")
                         
-                        # Organiza o Ranking
                         ranking = []
                         for t in transp_selecionadas:
                             col_total = f'TOTAL_{t}'
@@ -372,73 +363,58 @@ elif menu == "🧮 Cotação":
                                 valor_total = res_calc[col_total].iloc[0]
                                 ranking.append({"transp": t, "total": valor_total})
                         
-                        # Ordena do menor para o maior preço
                         ranking = sorted(ranking, key=lambda x: x['total'] if x['total'] > 0 else 999999)
 
-                        # Mapeamento exato de todas as suas taxas para exibição
+                        # Mapeamento de todas as taxas
                         mapeamento_taxas = {
-                            "FRETE_PESO": "Frete Peso",
-                            "FRETE_EXCEDENTE": "Frete Excedente",
-                            "AD_VALOREM_PERC": "Ad Valorem %",
-                            "CTRC": "CTRC",
-                            "GRIS_MIN": "Gris Min",
-                            "SUFRAMA": "Suframa",
-                            "REDESPACHO_FLUVIAL": "Redespacho Fluvial",
-                            "DESPACHO": "Despacho",
-                            "AD_VALOREM_MIN": "Ad Valorem Min",
-                            "PEDAGIO": "Pedágio",
-                            "EMEX_PERC": "Emex %",
-                            "SEC_CAT": "SEC-CAT",
-                            "TDA_PERC": "TDA %",
-                            "TRT_PERC": "TRT %",
-                            "TAS": "TAS",
-                            "GRIS_PERC": "Gris %",
-                            "EMEX_MIN": "Emex Min",
-                            "FLUVIAL": "Fluvial",
-                            "TDA_MIN": "TDA Min"
+                            "FRETE_PESO": "Frete Peso", "FRETE_EXCEDENTE": "Frete Excedente",
+                            "AD_VALOREM_PERC": "Ad Valorem %", "CTRC": "CTRC",
+                            "GRIS_MIN": "Gris Min", "SUFRAMA": "Suframa",
+                            "REDESPACHO_FLUVIAL": "Redespacho Fluvial", "DESPACHO": "Despacho",
+                            "AD_VALOREM_MIN": "Ad Valorem Min", "PEDAGIO": "Pedágio",
+                            "EMEX_PERC": "Emex %", "SEC_CAT": "SEC-CAT",
+                            "TDA_PERC": "TDA %", "TRT_PERC": "TRT %",
+                            "TAS": "TAS", "GRIS_PERC": "Gris %",
+                            "EMEX_MIN": "Emex Min", "FLUVIAL": "Fluvial", "TDA_MIN": "TDA Min"
                         }
 
                         for item in ranking:
                             t_nome = item['transp']
-                            with st.container():
-                                if item['total'] > 0:
-                                    # Card Visual do Resultado
-                                    st.markdown(f"""
-                                    <div style="background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #10b981; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
-                                        <div>
-                                            <span style="color: #64748b; font-size: 0.8rem; font-weight: bold;">TRANSPORTADORA</span><br>
-                                            <b style="font-size: 1.1rem; color: #1e293b;">{t_nome}</b>
-                                        </div>
-                                        <div style="text-align: right;">
-                                            <span style="color: #64748b; font-size: 0.8rem; font-weight: bold;">VALOR TOTAL</span><br>
-                                            <b style="font-size: 1.4rem; color: #059669;">{format_brl(item['total'])}</b>
-                                        </div>
+                            if item['total'] > 0:
+                                # CARD COMPACTO: Reduzi padding de 15px para 8px e as fontes
+                                st.markdown(f"""
+                                <div style="background-color: #ffffff; padding: 8px 15px; border-radius: 8px; border-left: 4px solid #10b981; margin-bottom: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <span style="color: #64748b; font-size: 0.65rem; font-weight: bold; text-transform: uppercase;">Transportadora</span><br>
+                                        <b style="font-size: 0.9rem; color: #1e293b;">{t_nome}</b>
                                     </div>
-                                    """, unsafe_allow_html=True)
+                                    <div style="text-align: right;">
+                                        <span style="color: #64748b; font-size: 0.65rem; font-weight: bold; text-transform: uppercase;">Valor Total</span><br>
+                                        <b style="font-size: 1.1rem; color: #059669;">{format_brl(item['total'])}</b>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
 
-                                    # Detalhamento em Texto dentro do Expander
-                                    detalhes_exibir = []
-                                    for col_key, label in mapeamento_taxas.items():
-                                        col_full = f"{col_key}_{t_nome}"
-                                        if col_full in res_calc.columns:
-                                            valor_v = res_calc[col_full].iloc[0]
-                                            # Só adiciona na lista se o valor for maior que zero
-                                            if valor_v > 0:
-                                                detalhes_exibir.append(f"**{label}:** {format_brl(valor_v)}")
+                                # DETALHAMENTO COMPACTO
+                                detalhes_exibir = []
+                                for col_key, label in mapeamento_taxas.items():
+                                    col_full = f"{col_key}_{t_nome}"
+                                    if col_full in res_calc.columns:
+                                        v = res_calc[col_full].iloc[0]
+                                        if v > 0:
+                                            # Texto das taxas menor dentro do expander
+                                            detalhes_exibir.append(f"<small>**{label}:** {format_brl(v)}</small>")
 
-                                    if detalhes_exibir:
-                                        with st.expander(f"🔍 Detalhes das Taxas - {t_nome}"):
-                                            for linha in detalhes_exibir:
-                                                st.write(linha)
-                                            st.divider()
-                                            st.write(f"**Valor Final:** {format_brl(item['total'])}")
-                                    
-                                    st.markdown("<br>", unsafe_allow_html=True)
-                                else:
-                                    st.warning(f"🚫 **{t_nome}**: Sem atendimento para {cid_input}-{uf_input} ou sem dados de tabela.")
+                                if detalhes_exibir:
+                                    with st.expander(f"🔍 Detalhes - {t_nome}"):
+                                        for linha in detalhes_exibir:
+                                            st.markdown(linha, unsafe_allow_html=True)
+                                        st.markdown(f"<hr style='margin: 5px 0;'><small><b>Final: {format_brl(item['total'])}</b></small>", unsafe_allow_html=True)
+                            else:
+                                st.warning(f"🚫 {t_nome}: Sem atendimento.")
                                     
                     except Exception as e:
-                        st.error(f"Erro ao processar cálculo: {e}")
+                        st.error(f"Erro: {e}")
 
 # --- BASE DE NOTAS ---
 elif menu == "📂 Base de Notas":
