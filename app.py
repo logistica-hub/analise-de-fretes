@@ -10,7 +10,7 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS Original do Usuário (Versão 19.0)
+# CSS Original do Usuário
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -68,8 +68,8 @@ def to_excel(df_completo):
     cols_total = [c for c in df_completo.columns if c.startswith("TOTAL_")]
     transportadoras = [c.replace("TOTAL_", "") for c in cols_total]
     
-    # Adicionado SUFRAMA, FLUVIAL e REDESPACHO_F ao filtro de prefixos para organização por abas
-    prefixos = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "SUFRAMA_", "FLUVIAL_", "REDESPACHO_F_", "OUTROS_", "TOTAL_"]
+    # Adicionado SEC_CAT ao filtro de prefixos
+    prefixos = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "SUFRAMA_", "SEC_CAT_", "FLUVIAL_", "REDESPACHO_F_", "OUTROS_", "TOTAL_"]
     
     cols_originais = [c for c in df_completo.columns if not any(c.startswith(p) for p in prefixos)]
     
@@ -93,7 +93,7 @@ def to_excel(df_completo):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("Ave Maria - Analise de Fretes")
-    st.info("Versão 19.0")
+    st.info("Versão 20.0")
     if 'logo_data' not in st.session_state: st.session_state.logo_data = None
     if st.session_state.logo_data:
         st.image(st.session_state.logo_data, use_container_width=True)
@@ -111,7 +111,6 @@ with st.sidebar:
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
-    # Busca dados completos apenas para o Dashboard
     res = supabase.table("cotacoes").select("*").execute()
     if res.data:
         all_dfs = [pd.DataFrame(r['detalhes_json']) for r in res.data if r['detalhes_json']]
@@ -213,7 +212,8 @@ elif menu == "🚛 Cadastro de Transportadora":
                 r = st.columns(3); f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
                 faixas.append({"min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")})
             st.divider(); st.markdown("### 💰 Mapeamento de Taxas Adicionais")
-            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "Fluvial", "Redespacho Fluvial"]
+            # Adicionado SEC-CAT à lista de mapeamento
+            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "SEC-CAT", "Fluvial", "Redespacho Fluvial"]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
                 v_tx = mapa.get('taxas', {}).get(tx, "Não mapear")
@@ -284,10 +284,14 @@ elif menu == "💰 Comparativo":
                 emx = np.maximum(valores_notas * get_v(m['taxas'].get("Emex %")), get_v(m['taxas'].get("Emex Min")))
                 ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
                 
-                # CORREÇÃO: Taxas detalhadas com colunas próprias
-                suf = valores_notas * get_v(m['taxas'].get("Suframa"))
+                # CORREÇÕES SOLICITADAS:
+                # 1. Suframa como VALOR FIXO (Soma direta)
+                suf = get_v(m['taxas'].get("Suframa"))
+                # 2. SEC-CAT como VALOR FIXO (Soma direta)
+                seccat = get_v(m['taxas'].get("SEC-CAT"))
+                # 3. Fluvial e Redespacho Fluvial como % sobre nota (Mantido conforme solicitado)
                 fluv = valores_notas * get_v(m['taxas'].get("Fluvial"))
-                red_f = get_v(m['taxas'].get("Redespacho Fluvial"))
+                red_f = valores_notas * get_v(m['taxas'].get("Redespacho Fluvial"))
 
                 df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
                 df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
@@ -298,13 +302,18 @@ elif menu == "💰 Comparativo":
                 df_final[f'TAS_{t_nome}'] = get_v(m['taxas'].get("TAS"))
                 df_final[f'CTRC_{t_nome}'] = get_v(m['taxas'].get("CTRC"))
                 
-                # Detalhamento solicitado
+                # Detalhamento e soma correta
                 df_final[f'SUFRAMA_{t_nome}'] = suf
+                df_final[f'SEC_CAT_{t_nome}'] = seccat
                 df_final[f'FLUVIAL_{t_nome}'] = fluv
                 df_final[f'REDESPACHO_F_{t_nome}'] = red_f
-                df_final[f'OUTROS_{t_nome}'] = 0.0 # Zerado pois agora estão detalhados acima
+                df_final[f'OUTROS_{t_nome}'] = 0.0 
                 
-                df_final[f'TOTAL_{t_nome}'] = f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + suf + fluv + red_f
+                # SOMA TOTAL incluindo as novas taxas e lógicas
+                df_final[f'TOTAL_{t_nome}'] = (f_peso + adv + grs + emx + ped + 
+                                               get_v(m['taxas'].get("TAS")) + 
+                                               get_v(m['taxas'].get("CTRC")) + 
+                                               suf + seccat + fluv + red_f)
 
             progresso_bar.progress(1.0)
             
@@ -326,23 +335,19 @@ elif menu == "💰 Comparativo":
                 st.error(f"Erro ao salvar histórico: {e}")
     else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
 
-# --- HISTÓRICO (OTIMIZADO COM LAZY LOADING) ---
+# --- HISTÓRICO ---
 elif menu == "📜 Histórico":
     st.title("📜 Histórico de Cotações")
-    # OTIMIZAÇÃO: Busca apenas metadados (id, data, qtd) para carregar a tela instantaneamente
     res_h = supabase.table("cotacoes").select("id, data_hora, qtd").order("id", desc=True).execute()
     
     if res_h.data:
         df_meta = pd.DataFrame(res_h.data)
-        # Agrupa por data_hora para mostrar blocos de relatórios
         for data_ref, g in df_meta.groupby("data_hora", sort=False):
             with st.expander(f"📦 {data_ref} | {g['qtd'].sum()} Notas"):
-                # O detalhe (JSON pesado) só é buscado se o usuário clicar no botão de baixar
                 c_btn1, c_btn2 = st.columns(2)
                 
                 if c_btn1.button(f"🔍 Preparar Download", key=f"prep_{g['id'].iloc[0]}"):
                     with st.spinner("Baixando dados detalhados..."):
-                        # Busca os detalhes_json apenas deste registro específico
                         ids_lote = g['id'].tolist()
                         res_detalhe = supabase.table("cotacoes").select("detalhes_json").in_("id", ids_lote).execute()
                         
