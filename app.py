@@ -196,26 +196,25 @@ if menu == "📊 Dashboard":
                 nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
             
             with st.container():
-                f1, f2, f3 = st.columns([1.5, 2.5, 1.5])
+                f1, f2 = st.columns([2, 2])
+                
                 sel_tr = f1.multiselect("🚛 Transportadoras", nomes_t, default=nomes_t)
+                
                 col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
                 lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
                 sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
-                col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA', 'MES_NF']), None)
-                lista_datas = sorted(df_total[col_data].unique()) if col_data else []
-                sel_data = f3.multiselect("📅 Período", lista_datas, default=lista_datas)
             
+            # --- Aplicação dos Filtros ---
             df_filt = df_total.copy()
             if 'transportadora' in df_filt.columns:
                 df_filt = df_filt[df_filt['transportadora'].isin(sel_tr)]
             if col_uf: 
                 df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
-            if col_data: 
-                df_filt = df_filt[df_filt[col_data].isin(sel_data)]
             
             if not df_filt.empty:
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), 'valor_total_notas')
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
+                
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), 'peso_total')
                 peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
                 
@@ -228,6 +227,7 @@ if menu == "📊 Dashboard":
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
+                
                 qtd_notas = df_filt['qtd'].sum() if 'qtd' in df_filt.columns else len(df_filt)
                 
                 with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{int(qtd_notas)}</div></div>', unsafe_allow_html=True)
