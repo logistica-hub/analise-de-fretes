@@ -100,7 +100,7 @@ with st.sidebar:
     st.divider()
     menu = st.radio("Navegação", ["📊 Dashboard", "📂 Base Comercial", "🚛 Cadastro de Transportadora", "💰 Comparativo"])
 
-# --- DASHBOARD ---
+# --- DASHBOARD ATUALIZADO (Lógica de destaque corrigida) ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     res = supabase.table("cotacoes").select("*").execute()
@@ -110,39 +110,56 @@ if menu == "📊 Dashboard":
             df_total = pd.concat(all_dfs, ignore_index=True)
             cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
             nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
+            
             f1, f2, f3 = st.columns(3)
             sel_tr = f1.multiselect("Transportadoras", nomes_t, default=nomes_t)
+            
             col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
             lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
             sel_uf = f2.multiselect("Estados (UF)", lista_ufs, default=lista_ufs)
+            
             col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA']), None)
             lista_datas = sorted(df_total[col_data].unique()) if col_data else []
             sel_data = f3.multiselect("Período", lista_datas, default=lista_datas)
+            
             df_filt = df_total.copy()
             if col_uf: df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
             if col_data: df_filt = df_filt[df_filt[col_data].isin(sel_data)]
+            
             cols_sel = [f"TOTAL_{t}" for t in sel_tr]
+            
             if not df_filt.empty and cols_sel:
                 col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), None)
                 val_total_notas = df_filt[col_val_nf].sum() if col_val_nf else 0
                 col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), None)
                 peso_total = df_filt[col_peso].sum() if col_peso else 0
                 val_total_frete = df_filt[cols_sel].sum().sum()
+                
                 st.markdown("<br>", unsafe_allow_html=True)
                 m1, m2, m3, m4 = st.columns(4)
                 with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{len(df_filt)}</div></div>', unsafe_allow_html=True)
                 with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
                 with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">PESO TOTAL</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
                 with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">INVESTIMENTO EM FRETE</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
+                
                 st.markdown("<br>", unsafe_allow_html=True)
-                st.subheader("💰 Melhor Custo por Estado")
+                st.subheader("💰 Melhor Custo por Estado (Ignorando Zerados)")
+                
                 if col_uf:
                     df_uf = df_filt.groupby(col_uf)[cols_sel].sum()
                     df_uf.columns = [c.replace("TOTAL_", "") for c in df_uf.columns]
-                    def highlight_min(s):
-                        is_min = s == s.min()
+                    
+                    # NOVA LÓGICA DE PINTURA:
+                    def highlight_min_no_zero(s):
+                        # Criamos uma máscara que ignora valores <= 0
+                        s_validos = s[s > 0]
+                        if not s_validos.empty:
+                            is_min = s == s_validos.min()
+                        else:
+                            is_min = [False] * len(s)
                         return ['background-color: #ecfdf5; color: #065f46; font-weight: bold; border: 1px solid #10b981' if v else 'color: #475569' for v in is_min]
-                    st.dataframe(df_uf.style.apply(highlight_min, axis=1).format(format_brl), use_container_width=True, height=500)
+                    
+                    st.dataframe(df_uf.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
     else: st.info("Sem histórico de cotações para exibir.")
 
 # --- ABA DE BASE COMERCIAL ---
