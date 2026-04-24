@@ -176,7 +176,8 @@ def to_excel(df_completo):
 with st.sidebar:
     st.title("Ave Maria")
     
-    if 'logo_data' not in st.session_state: st.session_state.logo_data = None
+    if 'logo_data' not in st.session_state: 
+        st.session_state.logo_data = None
     
     if st.session_state.logo_data:
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
@@ -194,25 +195,31 @@ with st.sidebar:
     
     st.divider()
     
-    # Lista única de navegação para evitar erros de atualização
+    # Lista atualizada conforme a imagem:
+    # "Calculo de Comparativo" foi movido para cima do separador e nomes padronizados
     menu_opcoes = [
         "📊 Dashboard", 
         "🧮 Cotação", 
         "🚛 Cadastro de Transportadora", 
-        "💰 Calculo de Comparativo",
-        "---", # Separador Visual
-        "📂 Base de Notas", 
-        "📜 Historico de Comparativos"
+        "💰 Cálculo de Comparativo",  # Adicionado acento e mantido no grupo superior
+        "---",                        # Separador visual
+        "📁 Base de Notas",           # Ícone de pasta conforme imagem
+        "📜 Histórico de Comparativos" # Adicionado acento
     ]
     
+    # Renderiza o rádio
     escolha = st.radio("Navegação", menu_opcoes)
     
-    # Lógica para tratar o separador e unificar a variável menu
+    # Lógica para tratar o separador
     if escolha == "---":
-        st.info("Selecione uma opção acima ou abaixo.")
-        menu = "📊 Dashboard"
+        st.warning("Selecione uma opção válida.")
+        # Mantém a seleção anterior ou volta para o Dashboard para não quebrar a página
+        if 'menu' not in st.session_state:
+            st.session_state.menu = "📊 Dashboard"
+        menu = st.session_state.menu
     else:
         menu = escolha
+        st.session_state.menu = escolha
 
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
