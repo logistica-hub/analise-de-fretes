@@ -369,13 +369,15 @@ elif menu == "🧮 Cotação":
                         ranking = sorted(ranking, key=lambda x: x['total'] if x['total'] > 0 else 999999)
 
                         for item in ranking:
+                            t_nome = item['transp']
                             with st.container():
                                 if item['total'] > 0:
+                                    # Card Principal
                                     st.markdown(f"""
-                                    <div style="background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #10b981; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
+                                    <div style="background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #10b981; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center;">
                                         <div>
                                             <span style="color: #64748b; font-size: 0.8rem; font-weight: bold;">TRANSPORTADORA</span><br>
-                                            <b style="font-size: 1.1rem; color: #1e293b;">{item['transp']}</b>
+                                            <b style="font-size: 1.1rem; color: #1e293b;">{t_nome}</b>
                                         </div>
                                         <div style="text-align: right;">
                                             <span style="color: #64748b; font-size: 0.8rem; font-weight: bold;">VALOR TOTAL</span><br>
@@ -383,8 +385,28 @@ elif menu == "🧮 Cotação":
                                         </div>
                                     </div>
                                     """, unsafe_allow_html=True)
+                                    
+                                    # --- NOVO: Detalhamento de Taxas ---
+                                    # Lista de possíveis sufixos de taxas que sua engine_calculo gera
+                                    taxas_possiveis = ["FPESO", "ADVALOREM", "GRIS", "PEDAGIO", "TAS", "TRT", "TDE", "TDA", "SUFRAMA"]
+                                    detalhes_exibir = {}
+                                    
+                                    for tx in taxas_possiveis:
+                                        col_name = f"{tx}_{t_nome}"
+                                        if col_name in res_calc.columns:
+                                            v_taxa = res_calc[col_name].iloc[0]
+                                            if v_taxa > 0:
+                                                detalhes_exibir[tx] = v_taxa
+                                    
+                                    if detalhes_exibir:
+                                        with st.expander(f"🔍 Ver taxas de {t_nome}"):
+                                            for nome_tx, valor_tx in detalhes_exibir.items():
+                                                st.write(f"**{nome_tx}:** {format_brl(valor_tx)}")
+                                    
+                                    st.markdown("<br>", unsafe_allow_html=True) # Espaço entre cards
+                                    
                                 else:
-                                    st.warning(f"🚫 **{item['transp']}**: Não atende a região de {cid_input}-{uf_input} ou dados incompletos na tabela.")
+                                    st.warning(f"🚫 **{t_nome}**: Não atende a região de {cid_input}-{uf_input} ou dados incompletos.")
                     except Exception as e:
                         st.error(f"Erro ao calcular: {e}")
 
