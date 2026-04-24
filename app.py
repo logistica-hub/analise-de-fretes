@@ -10,7 +10,7 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS Original com foco na organização do Dashboard (CSL Style)
+# CSS Original (CSL Style)
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -158,46 +158,117 @@ with st.sidebar:
     st.divider()
     menu = st.radio("Navegação", ["📊 Dashboard", "📂 Base Comercial", "🚛 Cadastro de Transportadora", "💰 Comparativo", "📜 Histórico"])
 
-# --- DASHBOARD ---
+# --- DASHBOARD COM FILTROS OTIMIZADOS (ESTILO VERSÃO 18.0) ---
 if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
+    
+    # CSS específico para deixar os filtros (tags) menores e mais discretos
+    st.markdown("""
+        <style>
+        /* Diminui o tamanho das tags nos filtros multiselect */
+        span[data-baseweb="tag"] {
+            background-color: #f1f5f9 !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 6px !important;
+            padding: 2px 8px !important;
+        }
+        span[data-baseweb="tag"] span {
+            color: #475569 !important;
+            font-size: 12px !important;
+        }
+        /* Remove o ícone de 'X' vermelho pesado e coloca um cinza discreto */
+        span[data-baseweb="tag"] [role="button"] svg {
+            fill: #94a3b8 !important;
+        }
+        /* Ajusta o espaçamento entre as colunas de filtro */
+        div[data-testid="column"] {
+            padding: 0 10px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     res = supabase.table("cotacoes").select("*").execute()
     if res.data:
-        resumos_list = []
-        for r in res.data:
-            if isinstance(r['detalhes_json'], list):
-                for item in r['detalhes_json']:
-                    item['data_cotacao'] = r['data_hora']
-                    if 'mes_nf' not in item:
-                        try:
-                            dt_obj = datetime.strptime(r['data_hora'], "%d/%m/%Y %H:%M")
-                            meses = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
-                            item['mes_nf'] = meses[dt_obj.month - 1]
-                        except: item['mes_nf'] = "Indefinido"
-                    resumos_list.append(item)
-        
-        if resumos_list:
-            df_total = pd.DataFrame(resumos_list)
+        # Tenta pegar os detalhes ou a base comercial para montar o df_total
+        all_dfs = [pd.DataFrame(r['detalhes_json']) for r in res.data if r['detalhes_json']]
+        if all_dfs:
+            df_total = pd.concat(all_dfs, ignore_index=True)
             
+            # Identifica as transportadoras pelos prefixos das colunas ou pela coluna 'transportadora'
+            if 'transportadora' in df_total.columns:
+                nomes_t = sorted(df_total['transportadora'].unique())
+            else:
+                cols_f = [c for c in df_total.columns if c.startswith("TOTAL_")]
+                nomes_t = [c.replace("TOTAL_", "") for c in cols_f]
+            
+            # Container de Filtros com visual limpo
             with st.container():
-                c1, c2, c3 = st.columns([2, 2, 2])
-                sel_tr = c1.multiselect("🚛 Transportadora", sorted(df_total['transportadora'].unique()), default=df_total['transportadora'].unique())
-                sel_uf = c2.multiselect("📍 Estado (UF)", sorted(df_total['uf'].unique()), default=df_total['uf'].unique())
-                sel_mes = c3.multiselect("📅 Mês da Nota Fiscal", sorted(df_total['mes_nf'].unique()), default=df_total['mes_nf'].unique())
-
-            df_filt = df_total[df_total['transportadora'].isin(sel_tr) & df_total['uf'].isin(sel_uf) & df_total['mes_nf'].isin(sel_mes)]
-
-            if not df_filt.empty:
-                m1, m2, m3, m4 = st.columns(4)
-                m1.markdown(f'<div class="metric-card"><div class="metric-label">Notas Processadas</div><div class="metric-value">{int(df_filt["qtd"].sum())}</div></div>', unsafe_allow_html=True)
-                m2.markdown(f'<div class="metric-card"><div class="metric-label">Valor Total Mercadoria</div><div class="metric-value">{format_brl(df_filt["valor_total_notas"].sum())}</div></div>', unsafe_allow_html=True)
-                m3.markdown(f'<div class="metric-card"><div class="metric-label">Peso Total</div><div class="metric-value">{format_kg(df_filt["peso_total"].sum())}</div></div>', unsafe_allow_html=True)
-                m4.markdown(f'<div class="metric-card"><div class="metric-label">Investimento Frete</div><div class="metric-value">{format_brl(df_filt["valor_total_frete"].sum())}</div></div>', unsafe_allow_html=True)
+                f1, f2, f3 = st.columns([1.5, 2.5, 1.5]) # Ajuste de largura proporcional
                 
-                st.subheader("💰 Resumo Consolidado por Estado")
-                df_pivot = df_filt.pivot_table(index='uf', columns='transportadora', values='valor_total_frete', aggfunc='sum').fillna(0)
-                st.dataframe(df_pivot.style.apply(lambda s: ['background-color: #ecfdf5; color: #065f46; font-weight: bold' if (v > 0 and v == s[s>0].min()) else '' for v in s], axis=1).format(format_brl), use_container_width=True)
-    else: st.info("Sem dados para exibir no Dashboard.")
+                sel_tr = f1.multiselect("🚛 Transportadoras", nomes_t, default=nomes_t)
+                
+                col_uf = next((c for c in df_total.columns if c.upper() == 'UF'), None)
+                lista_ufs = sorted(df_total[col_uf].unique()) if col_uf else []
+                sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
+                
+                col_data = next((c for c in df_total.columns if c.upper() in ['MÊS', 'MES', 'DATA', 'MES_NF']), None)
+                lista_datas = sorted(df_total[col_data].unique()) if col_data else []
+                sel_data = f3.multiselect("📅 Período", lista_datas, default=lista_datas)
+            
+            # --- Aplicação dos Filtros ---
+            df_filt = df_total.copy()
+            if 'transportadora' in df_filt.columns:
+                df_filt = df_filt[df_filt['transportadora'].isin(sel_tr)]
+            if col_uf: 
+                df_filt = df_filt[df_filt[col_uf].isin(sel_uf)]
+            if col_data: 
+                df_filt = df_filt[df_filt[col_data].isin(sel_data)]
+            
+            if not df_filt.empty:
+                # Métricas
+                col_val_nf = next((c for c in df_filt.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), 'valor_total_notas')
+                val_total_notas = df_filt[col_val_nf].sum() if col_val_nf in df_filt.columns else 0
+                
+                col_peso = next((c for c in df_filt.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), 'peso_total')
+                peso_total = df_filt[col_peso].sum() if col_peso in df_filt.columns else 0
+                
+                col_frete = next((c for c in df_filt.columns if 'VALOR_TOTAL_FRETE' in c.upper()), None)
+                if col_frete:
+                    val_total_frete = df_filt[col_frete].sum()
+                else:
+                    cols_sel = [f"TOTAL_{t}" for t in sel_tr if f"TOTAL_{t}" in df_filt.columns]
+                    val_total_frete = df_filt[cols_sel].sum().sum() if cols_sel else 0
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                m1, m2, m3, m4 = st.columns(4)
+                
+                # Qtd de Notas (ou linhas filtradas)
+                qtd_notas = df_filt['qtd'].sum() if 'qtd' in df_filt.columns else len(df_filt)
+                
+                with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{int(qtd_notas)}</div></div>', unsafe_allow_html=True)
+                with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(val_total_notas)}</div></div>', unsafe_allow_html=True)
+                with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">PESO TOTAL</div><div class="metric-value">{format_kg(peso_total)}</div></div>', unsafe_allow_html=True)
+                with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">INVESTIMENTO EM FRETE</div><div class="metric-value">{format_brl(val_total_frete)}</div></div>', unsafe_allow_html=True)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.subheader("💰 Melhor Custo por Estado")
+                
+                if col_uf:
+                    # Pivot para mostrar custo por Transportadora/UF
+                    if 'transportadora' in df_filt.columns:
+                        df_pivot = df_filt.pivot_table(index=col_uf, columns='transportadora', values='valor_total_frete', aggfunc='sum').fillna(0)
+                    else:
+                        cols_sel = [f"TOTAL_{t}" for t in sel_tr if f"TOTAL_{t}" in df_filt.columns]
+                        df_pivot = df_filt.groupby(col_uf)[cols_sel].sum()
+                        df_pivot.columns = [c.replace("TOTAL_", "") for c in df_pivot.columns]
+                    
+                    def highlight_min_no_zero(s):
+                        s_validos = s[s > 0]
+                        is_min = s == s_validos.min() if not s_validos.empty else [False]*len(s)
+                        return ['background-color: #ecfdf5; color: #065f46; font-weight: bold; border: 1px solid #10b981' if v else 'color: #475569' for v in is_min]
+                    
+                    st.dataframe(df_pivot.style.apply(highlight_min_no_zero, axis=1).format(format_brl), use_container_width=True, height=500)
+    else: st.info("Sem histórico de cotações para exibir.")
 
 # --- BASE COMERCIAL ---
 elif menu == "📂 Base Comercial":
@@ -342,7 +413,6 @@ elif menu == "📜 Histórico":
                 st.divider()
                 c1, c2 = st.columns([3, 1])
                 
-                # --- LÓGICA DE EXPORTAÇÃO CORRIGIDA ---
                 res_b = supabase.table("base_comercial").select("*").execute()
                 if res_b.data:
                     df_base_exp = pd.DataFrame(res_b.data[0]['dados_json'])
@@ -350,7 +420,6 @@ elif menu == "📜 Histórico":
                     res_t_exp = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
                     df_ts_exp = pd.DataFrame(res_t_exp.data)
                     
-                    # Gera o Excel em memória uma única vez
                     df_detalhado = engine_calculo(df_base_exp, t_usadas, df_ts_exp)
                     excel_data = to_excel(df_detalhado)
                     
