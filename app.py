@@ -70,28 +70,54 @@ def super_limpeza(txt):
 def engine_calculo(df_base, selecionadas, df_ts):
     df_final = df_base.copy()
     col_cid_nome = next((c for c in df_base.columns if 'CIDADE' in c.upper()), df_base.columns[2])
+    col_uf_nome = next((c for c in df_base.columns if c.upper() == 'UF'), df_base.columns[3])
     col_peso_nome = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
     col_valor_nome = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
     
     cid_notas = df_base[col_cid_nome].astype(str).apply(super_limpeza).values
+    uf_notas = df_base[col_uf_nome].astype(str).apply(super_limpeza).values
     pesos_notas = pd.to_numeric(df_base[col_peso_nome], errors='coerce').fillna(0).values
     valores_notas = pd.to_numeric(df_base[col_valor_nome], errors='coerce').fillna(0).values
 
     for t_nome in selecionadas:
         t_r = df_ts[df_ts['nome'] == t_nome].iloc[0]
         m, df_tab, df_abr = t_r['mapeamento_json'], pd.DataFrame(t_r['tabela_json']), pd.DataFrame(t_r['cidades_json'])
+        
+        # Correção: Criar chave composta Cidade + UF para identificar RIO CLARO-SP vs RIO CLARO-RJ
         df_abr['cid_clean'] = df_abr[m['ap_cidade']].astype(str).apply(super_limpeza)
-        dic_ponte = df_abr.set_index('cid_clean')[m['ap_sigla']].astype(str).apply(super_limpeza).to_dict()
-        siglas_match = pd.Series(cid_notas).map(dic_ponte).fillna("ND").values
+        df_abr['uf_clean'] = df_abr[m.get('ap_uf', m['ap_cidade'])].astype(str).apply(super_limpeza) # Fallback seguro
+        
+        # Criar dicionário usando tupla (Cidade, UF) como chave
+        dic_ponte = {
+            (row['cid_clean'], row['uf_clean']): super_limpeza(row[m['ap_sigla']]) 
+            for _, row in df_abr.iterrows()
+        }
+        
+        # Mapear as notas usando a mesma lógica de tupla
+        siglas_match = []
+        for c, u in zip(cid_notas, uf_notas):
+            siglas_match.append(dic_ponte.get((c, u), "ND"))
+        siglas_match = np.array(siglas_match)
+
         df_tab['sig_clean'] = df_tab[m['tab_sigla']].astype(str).apply(super_limpeza)
         df_tab_idx = df_tab.set_index('sig_clean')
         
-        def get_v(col): return df_tab_idx[col].reindex(siglas_match).fillna(0).values if col and col != "Não mapear" and col in df_tab_idx.columns else np.zeros(len(df_base))
+        def get_v(col): 
+            if col and col != "Não mapear" and col in df_tab_idx.columns:
+                return df_tab_idx[col].reindex(siglas_match).fillna(0).values
+            return np.zeros(len(df_base))
         
         f_peso = np.zeros(len(df_base)); v_kg_adic = np.zeros(len(df_base))
+        # Só calcula onde a sigla foi encontrada
+        mask_atendida = (siglas_match != "ND")
+        
         for faixa in m['faixas']:
-            v_f = get_v(faixa['col']); mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0); f_peso[mask] = v_f[mask]
-        u_max = m['faixas'][-1]['max']; mask_e = (pesos_notas > u_max)
+            v_f = get_v(faixa['col'])
+            mask = (pesos_notas <= faixa['max']) & (f_peso == 0.0) & mask_atendida
+            f_peso[mask] = v_f[mask]
+            
+        u_max = m['faixas'][-1]['max']
+        mask_e = (pesos_notas > u_max) & mask_atendida
         if mask_e.any():
             v_b = get_v(m['faixas'][-1]['col']); v_ex = get_v(m['kg_extra'])
             v_kg_adic[mask_e] = (pesos_notas[mask_e] - u_max) * v_ex[mask_e]
@@ -105,31 +131,31 @@ def engine_calculo(df_base, selecionadas, df_ts):
         seccat = get_v(m['taxas'].get("SEC-CAT"))
         fluv = valores_notas * get_v(m['taxas'].get("Fluvial"))
         red_f = valores_notas * get_v(m['taxas'].get("Redespacho Fluvial"))
-        
-        # NOVAS TAXAS
         tda = np.maximum(valores_notas * get_v(m['taxas'].get("TDA %")), get_v(m['taxas'].get("TDA Min")))
         despacho = get_v(m['taxas'].get("Despacho"))
         
-        # Cálculo do frete parcial para base do TRT
         frete_parcial = (f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + suf + seccat + fluv + red_f + tda + despacho)
         trt = frete_parcial * get_v(m['taxas'].get("TRT %"))
 
-        df_final[f'PESO_BASE_{t_nome}'] = f_peso - v_kg_adic
-        df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic
-        df_final[f'ADVAL_{t_nome}'] = adv
-        df_final[f'GRIS_{t_nome}'] = grs
-        df_final[f'EMEX_{t_nome}'] = emx
-        df_final[f'PEDAGIO_{t_nome}'] = ped
-        df_final[f'TAS_{t_nome}'] = get_v(m['taxas'].get("TAS"))
-        df_final[f'CTRC_{t_nome}'] = get_v(m['taxas'].get("CTRC"))
-        df_final[f'SUFRAMA_{t_nome}'] = suf
-        df_final[f'SEC_CAT_{t_nome}'] = seccat
-        df_final[f'FLUVIAL_{t_nome}'] = fluv
-        df_final[f'REDESPACHO_F_{t_nome}'] = red_f
-        df_final[f'TDA_{t_nome}'] = tda
-        df_final[f'DESPACHO_{t_nome}'] = despacho
-        df_final[f'TRT_{t_nome}'] = trt
-        df_final[f'TOTAL_{t_nome}'] = frete_parcial + trt
+        # Zera tudo se não houver atendimento para aquela cidade/UF
+        frete_total = (frete_parcial + trt) * mask_atendida
+
+        df_final[f'PESO_BASE_{t_nome}'] = (f_peso - v_kg_adic) * mask_atendida
+        df_final[f'KG_ADIC_{t_nome}'] = v_kg_adic * mask_atendida
+        df_final[f'ADVAL_{t_nome}'] = adv * mask_atendida
+        df_final[f'GRIS_{t_nome}'] = grs * mask_atendida
+        df_final[f'EMEX_{t_nome}'] = emx * mask_atendida
+        df_final[f'PEDAGIO_{t_nome}'] = ped * mask_atendida
+        df_final[f'TAS_{t_nome}'] = get_v(m['taxas'].get("TAS")) * mask_atendida
+        df_final[f'CTRC_{t_nome}'] = get_v(m['taxas'].get("CTRC")) * mask_atendida
+        df_final[f'SUFRAMA_{t_nome}'] = suf * mask_atendida
+        df_final[f'SEC_CAT_{t_nome}'] = seccat * mask_atendida
+        df_final[f'FLUVIAL_{t_nome}'] = fluv * mask_atendida
+        df_final[f'REDESPACHO_F_{t_nome}'] = red_f * mask_atendida
+        df_final[f'TDA_{t_nome}'] = tda * mask_atendida
+        df_final[f'DESPACHO_{t_nome}'] = despacho * mask_atendida
+        df_final[f'TRT_{t_nome}'] = trt * mask_atendida
+        df_final[f'TOTAL_{t_nome}'] = frete_total
     return df_final
 
 def to_excel(df_completo):
@@ -302,6 +328,7 @@ elif menu == "🚛 Cadastro de Transportadora":
             with cm2:
                 st.markdown("### 📍 Relação de Cidades")
                 m_ap_cid = st.selectbox("Coluna Cidade (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_cidade')) if mapa.get('ap_cidade') in cols_a else 0)
+                m_ap_uf = st.selectbox("Coluna UF (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_uf')) if mapa.get('ap_uf') in cols_a else 0)
                 m_ap_sig = st.selectbox("Coluna Sigla (na Relação)", cols_a, index=cols_a.index(mapa.get('ap_sigla')) if mapa.get('ap_sigla') in cols_a else 0)
             st.divider(); st.markdown("### ⚖️ Mapeamento de Faixas de Peso")
             n_f = st.number_input("Qtd Faixas de Peso", 1, 50, len(mapa.get('faixas', [])) or 6)
@@ -316,7 +343,7 @@ elif menu == "🚛 Cadastro de Transportadora":
                 v_tx = mapa.get('taxas', {}).get(tx, "Não mapear")
                 m_taxas[tx] = tx_cols[idx % 3].selectbox(tx, cols_t, index=cols_t.index(v_tx) if v_tx in cols_t else 0, key=f"tx_{idx}")
             if st.button("💾 Salvar Transportadora"):
-                payload = {"nome": nome_t, "tabela_json": df_t.to_dict(orient='records'), "cidades_json": df_a.to_dict(orient='records'), "mapeamento_json": {"ap_cidade": m_ap_cid, "ap_sigla": m_ap_sig, "tab_sigla": m_tb_sig, "tab_uf": m_tb_uf, "faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_ex}}
+                payload = {"nome": nome_t, "tabela_json": df_t.to_dict(orient='records'), "cidades_json": df_a.to_dict(orient='records'), "mapeamento_json": {"ap_cidade": m_ap_cid, "ap_uf": m_ap_uf, "ap_sigla": m_ap_sig, "tab_sigla": m_tb_sig, "tab_uf": m_tb_uf, "faixas": faixas, "taxas": m_taxas, "kg_extra": col_kg_ex}}
                 if e_id: supabase.table("transportadoras").update(payload).eq("id", e_id).execute()
                 else: supabase.table("transportadoras").insert(payload).execute()
                 st.session_state.edit_id = None; st.session_state.form_reset_key += 1; st.rerun()
@@ -386,7 +413,6 @@ elif menu == "📜 Histórico":
             qtd_total_h = r['qtd']
             
             with st.expander(f"📅 {dt}  |  📦 {qtd_total_h} Notas  |  💰 {format_brl(total_frete_h)}"):
-                # 1. MOSTRAR APENAS O CONSOLIDADO (Leve)
                 df_h = pd.DataFrame(detalhes)
                 consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
                 
@@ -397,9 +423,8 @@ elif menu == "📜 Histórico":
                 st.divider()
                 c1, c2 = st.columns([3, 1])
                 
-                # Botão para preparar o cálculo detalhado apenas se o usuário quiser baixar
                 if c1.button("🛠️ Preparar Download Detalhado", key=f"prep_{r['id']}"):
-                    with st.spinner("Processando base completa para exportação... Isso pode levar alguns segundos."):
+                    with st.spinner("Processando base completa para exportação..."):
                         res_b = supabase.table("base_comercial").select("*").execute()
                         if res_b.data:
                             df_base_exp = pd.DataFrame(res_b.data[0]['dados_json'])
@@ -407,7 +432,6 @@ elif menu == "📜 Histórico":
                             res_t_exp = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
                             df_ts_exp = pd.DataFrame(res_t_exp.data)
                             
-                            # Roda o cálculo apenas agora!
                             df_detalhado = engine_calculo(df_base_exp, t_usadas, df_ts_exp)
                             excel_data = to_excel(df_detalhado)
                             
@@ -419,7 +443,7 @@ elif menu == "📜 Histórico":
                                 key=f"dl_ready_{r['id']}"
                             )
                         else:
-                            st.error("Base comercial original não encontrada para recalcular o detalhado.")
+                            st.error("Base comercial original não encontrada.")
                 
                 if c2.button("🗑️ Remover", key=f"del_{r['id']}"):
                     supabase.table("cotacoes").delete().eq("id", r['id']).execute()
