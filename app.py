@@ -173,53 +173,86 @@ def to_excel(df_completo):
     return output.getvalue()
 
 # --- SIDEBAR ATUALIZADA ---
+
 with st.sidebar:
+
     st.title("Ave Maria")
+
     
-    if 'logo_data' not in st.session_state: 
-        st.session_state.logo_data = None
+
+    if 'logo_data' not in st.session_state: st.session_state.logo_data = None
+
     
+
     if st.session_state.logo_data:
+
         col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
+
         with col_l2:
+
             st.image(st.session_state.logo_data, width=100)
+
         
+
         if st.button("✏️ Alterar Logo", use_container_width=True):
+
             st.session_state.logo_data = None
+
             st.rerun()
+
     else:
+
         up_logo = st.file_uploader("🖼️ Logo da Empresa", type=["png", "jpg", "jpeg"])
+
         if up_logo:
+
             st.session_state.logo_data = up_logo.read()
+
             st.rerun()
+
     
+
     st.divider()
+
     
-    # Lista atualizada conforme a imagem:
-    # "Calculo de Comparativo" foi movido para cima do separador e nomes padronizados
+
+    # Lista única de navegação para evitar erros de atualização
+
     menu_opcoes = [
+
         "📊 Dashboard", 
+
         "🧮 Cotação", 
+
         "🚛 Cadastro de Transportadora", 
-        "💰 Cálculo de Comparativo",  # Adicionado acento e mantido no grupo superior
-        "---",                        # Separador visual
-        "📁 Base de Notas",           # Ícone de pasta conforme imagem
-        "📜 Histórico de Comparativos" # Adicionado acento
+
+        "💰 Calculo de Comparativo",
+
+        "---", # Separador Visual
+
+        "📂 Base de Notas", 
+
+        "📜 Historico de Comparativos"
+
     ]
+
     
-    # Renderiza o rádio
+
     escolha = st.radio("Navegação", menu_opcoes)
+
     
-    # Lógica para tratar o separador
+
+    # Lógica para tratar o separador e unificar a variável menu
+
     if escolha == "---":
-        st.warning("Selecione uma opção válida.")
-        # Mantém a seleção anterior ou volta para o Dashboard para não quebrar a página
-        if 'menu' not in st.session_state:
-            st.session_state.menu = "📊 Dashboard"
-        menu = st.session_state.menu
+
+        st.info("Selecione uma opção acima ou abaixo.")
+
+        menu = "📊 Dashboard"
+
     else:
+
         menu = escolha
-        st.session_state.menu = escolha
         
 # --- DASHBOARD ---
 if menu == "📊 Dashboard":
