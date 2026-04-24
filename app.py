@@ -10,7 +10,7 @@ from io import BytesIO
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Ave-Maria | Análise de Fretes", layout="wide")
 
-# CSS Original do Usuário
+# CSS Original com foco na organização do Dashboard (CSL Style)
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -21,23 +21,26 @@ st.markdown("""
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         border: 1px solid #e2e8f0;
         text-align: center;
-        transition: transform 0.2s;
-    }
-    .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
     }
     .metric-label {
-        font-size: 13px;
+        font-size: 12px;
         color: #64748b;
         margin-bottom: 8px;
         font-weight: 700;
-        letter-spacing: 0.5px;
+        text-transform: uppercase;
     }
     .metric-value {
-        font-size: 22px;
+        font-size: 24px;
         color: #1e293b;
         font-weight: 800;
+    }
+    .hist-header {
+        background: #f1f5f9;
+        padding: 10px 15px;
+        border-radius: 8px;
+        border-left: 5px solid #3b82f6;
+        margin-bottom: 5px;
     }
     h1, h2, h3 { color: #0f172a !important; font-weight: 800 !important; }
     </style>
@@ -160,40 +163,45 @@ if menu == "📊 Dashboard":
     st.title("📊 Indicadores de Frete")
     res = supabase.table("cotacoes").select("*").execute()
     if res.data:
-        # Reconstruir o DataFrame a partir dos resumos salvos em detalhes_json
         resumos_list = []
         for r in res.data:
             if isinstance(r['detalhes_json'], list):
                 for item in r['detalhes_json']:
-                    item['data_hora'] = r['data_hora'] # Sincroniza data
+                    item['data_cotacao'] = r['data_hora']
+                    # Garante que o mês exista no item para o filtro
+                    if 'mes_nf' not in item:
+                        try:
+                            # Se não tiver o mês salvo, tenta pegar da data_cotacao
+                            dt_obj = datetime.strptime(r['data_hora'], "%d/%m/%Y %H:%M")
+                            meses = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+                            item['mes_nf'] = meses[dt_obj.month - 1]
+                        except: item['mes_nf'] = "Indefinido"
                     resumos_list.append(item)
         
         if resumos_list:
             df_total = pd.DataFrame(resumos_list)
-            cols_f = list(df_total['transportadora'].unique())
             
+            # Filtros no topo estruturados
             with st.container():
-                f1, f2, f3 = st.columns([1.5, 2.5, 1.5])
-                sel_tr = f1.multiselect("🚛 Transportadoras", cols_f, default=cols_f)
-                lista_ufs = sorted(df_total['uf'].unique())
-                sel_uf = f2.multiselect("📍 Estados (UF)", lista_ufs, default=lista_ufs)
-                lista_datas = sorted(df_total['data_hora'].unique())
-                sel_data = f3.multiselect("📅 Período", lista_datas, default=lista_datas)
+                c1, c2, c3 = st.columns([2, 2, 2])
+                sel_tr = c1.multiselect("🚛 Transportadora", sorted(df_total['transportadora'].unique()), default=df_total['transportadora'].unique())
+                sel_uf = c2.multiselect("📍 Estado (UF)", sorted(df_total['uf'].unique()), default=df_total['uf'].unique())
+                sel_mes = c3.multiselect("📅 Mês da Nota Fiscal", sorted(df_total['mes_nf'].unique()), default=df_total['mes_nf'].unique())
 
-            df_filt = df_total[df_total['transportadora'].isin(sel_tr) & df_total['uf'].isin(sel_uf) & df_total['data_hora'].isin(sel_data)]
+            df_filt = df_total[df_total['transportadora'].isin(sel_tr) & df_total['uf'].isin(sel_uf) & df_total['mes_nf'].isin(sel_mes)]
 
             if not df_filt.empty:
+                # Layout CSL (Cards estruturados)
                 m1, m2, m3, m4 = st.columns(4)
-                with m1: st.markdown(f'<div class="metric-card"><div class="metric-label">NOTAS PROCESSADAS</div><div class="metric-value">{int(df_filt["qtd"].sum())}</div></div>', unsafe_allow_html=True)
-                with m2: st.markdown(f'<div class="metric-card"><div class="metric-label">VALOR TOTAL NOTAS</div><div class="metric-value">{format_brl(df_filt["valor_total_notas"].sum())}</div></div>', unsafe_allow_html=True)
-                with m3: st.markdown(f'<div class="metric-card"><div class="metric-label">PESO TOTAL</div><div class="metric-value">{format_kg(df_filt["peso_total"].sum())}</div></div>', unsafe_allow_html=True)
-                with m4: st.markdown(f'<div class="metric-card"><div class="metric-label">INVESTIMENTO EM FRETE</div><div class="metric-value">{format_brl(df_filt["valor_total_frete"].sum())}</div></div>', unsafe_allow_html=True)
+                m1.markdown(f'<div class="metric-card"><div class="metric-label">Notas Processadas</div><div class="metric-value">{int(df_filt["qtd"].sum())}</div></div>', unsafe_allow_html=True)
+                m2.markdown(f'<div class="metric-card"><div class="metric-label">Valor Total Mercadoria</div><div class="metric-value">{format_brl(df_filt["valor_total_notas"].sum())}</div></div>', unsafe_allow_html=True)
+                m3.markdown(f'<div class="metric-card"><div class="metric-label">Peso Total</div><div class="metric-value">{format_kg(df_filt["peso_total"].sum())}</div></div>', unsafe_allow_html=True)
+                m4.markdown(f'<div class="metric-card"><div class="metric-label">Investimento Frete</div><div class="metric-value">{format_brl(df_filt["valor_total_frete"].sum())}</div></div>', unsafe_allow_html=True)
                 
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.subheader("💰 Melhor Custo por Estado")
+                st.subheader("💰 Resumo Consolidado por Estado")
                 df_pivot = df_filt.pivot_table(index='uf', columns='transportadora', values='valor_total_frete', aggfunc='sum').fillna(0)
-                st.dataframe(df_pivot.style.apply(lambda s: ['background-color: #ecfdf5; color: #065f46; font-weight: bold' if (v > 0 and v == s[s>0].min()) else '' for v in s], axis=1).format(format_brl), use_container_width=True, height=500)
-    else: st.info("Sem histórico de cotações para exibir.")
+                st.dataframe(df_pivot.style.apply(lambda s: ['background-color: #ecfdf5; color: #065f46; font-weight: bold' if (v > 0 and v == s[s>0].min()) else '' for v in s], axis=1).format(format_brl), use_container_width=True)
+    else: st.info("Sem dados para exibir no Dashboard.")
 
 # --- BASE COMERCIAL ---
 elif menu == "📂 Base Comercial":
@@ -280,31 +288,39 @@ elif menu == "💰 Comparativo":
                 col_uf = next((c for c in df_base.columns if c.upper() == 'UF'), 'UF')
                 col_val_nf = next((c for c in df_base.columns if 'VALOR' in c.upper() and 'FRETE' not in c.upper()), df_base.columns[7])
                 col_peso = next((c for c in df_base.columns if 'PESO' in c.upper() and 'BASE' not in c.upper()), df_base.columns[6])
+                col_data_nf = next((c for c in df_base.columns if 'DATA' in c.upper() or 'EMISSAO' in c.upper()), None)
                 
-                # CRIAR O RESUMO COMPATÍVEL COM A TABELA ATUAL
+                meses_br = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+                
                 resumo_final = []
                 for t in selecionadas:
-                    res_uf = df_calc.groupby(col_uf).agg({col_val_nf: 'sum', col_peso: 'sum', f'TOTAL_{t}': 'sum'}).reset_index()
-                    qtd_uf = df_calc.groupby(col_uf).size().reset_index(name='qtd')
-                    res_uf = res_uf.merge(qtd_uf, on=col_uf)
+                    # Agrupar também por mês se a coluna existir
+                    agrupadores = [col_uf]
+                    if col_data_nf:
+                        df_calc['__temp_mes'] = pd.to_datetime(df_calc[col_data_nf], errors='coerce').dt.month.map(lambda x: meses_br[int(x)-1] if pd.notna(x) else "Indefinido")
+                        agrupadores.append('__temp_mes')
+                    
+                    res_uf = df_calc.groupby(agrupadores).agg({col_val_nf: 'sum', col_peso: 'sum', f'TOTAL_{t}': 'sum'}).reset_index()
+                    qtd_uf = df_calc.groupby(agrupadores).size().reset_index(name='qtd')
+                    res_uf = res_uf.merge(qtd_uf, on=agrupadores)
+                    
                     for _, row in res_uf.iterrows():
                         resumo_final.append({
                             "transportadora": t,
                             "uf": row[col_uf],
+                            "mes_nf": row['__temp_mes'] if col_data_nf else meses_br[datetime.now().month-1],
                             "qtd": int(row['qtd']),
                             "valor_total_notas": float(row[col_val_nf]),
                             "peso_total": float(row[col_peso]),
                             "valor_total_frete": float(row[f'TOTAL_{t}']),
-                            "lista_t": selecionadas # Metadata para o download saber quem recalculamos
+                            "lista_t": selecionadas
                         })
                 
-                # SALVA NA COLUNA "detalhes_json" (QUE O BANCO JÁ TEM)
                 supabase.table("cotacoes").insert({
                     "data_hora": data_sp, 
                     "qtd": len(df_base), 
-                    "detalhes_json": resumo_final # O segredo está aqui: salvamos o resumo no lugar do detalhado
+                    "detalhes_json": resumo_final
                 }).execute()
-                
                 st.success("Cálculo finalizado!")
                 st.rerun()
     else: st.warning("Cadastre a Base Comercial e as Transportadoras.")
@@ -314,22 +330,39 @@ elif menu == "📜 Histórico":
     st.title("📜 Histórico de Cotações")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     if res_h.data:
-        df_hist = pd.DataFrame(res_h.data)
-        for data_ref, g in df_hist.groupby("data_hora", sort=False):
-            with st.expander(f"📦 {data_ref} | Cotação"):
-                c1, c2 = st.columns(2)
-                if c1.button(f"🔍 Preparar Download Detalhado", key=f"pre_{data_ref}"):
-                    with st.spinner("Recalculando detalhes..."):
+        for r in res_h.data:
+            dt = r['data_hora']
+            detalhes = r['detalhes_json']
+            total_frete_h = sum(item['valor_total_frete'] for item in detalhes)
+            qtd_total_h = r['qtd']
+            
+            # Cabeçalho customizado solicitado
+            with st.expander(f"📅 {dt}  |  📦 {qtd_total_h} Notas  |  💰 {format_brl(total_frete_h)}"):
+                # Mostrar consolidado por transportadora
+                df_h = pd.DataFrame(detalhes)
+                consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
+                
+                st.markdown("### Consolidado por Transportadora")
+                for _, row_t in consolidado_t.iterrows():
+                    st.write(f"**{row_t['transportadora']}**: {format_brl(row_t['valor_total_frete'])}")
+                
+                st.divider()
+                c1, c2 = st.columns([3, 1])
+                
+                # Botão Exportar Automático
+                if c1.button(f"📥 Exportar Cotação", key=f"exp_{r['id']}"):
+                    with st.spinner("Exportando dados - O arquivo será baixado automaticamente"):
                         res_b = supabase.table("base_comercial").select("*").execute()
-                        df_base = pd.DataFrame(res_b.data[0]['dados_json'])
-                        # Pega a lista de transportadoras do resumo salvo
-                        t_usadas = g['detalhes_json'].iloc[0][0]['lista_t'] 
-                        res_t = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
-                        df_ts = pd.DataFrame(res_t.data)
-                        df_detalhado = engine_calculo(df_base, t_usadas, df_ts)
-                        excel = to_excel(df_detalhado)
-                        st.download_button("📥 Baixar Excel", excel, f"Relatorio_{data_ref.replace('/','-')}.xlsx", key=f"dl_{data_ref}")
-                if c2.button("🗑️ Remover", key=f"del_{data_ref}"):
-                    supabase.table("cotacoes").delete().eq("data_hora", data_ref).execute()
+                        if res_b.data:
+                            df_base = pd.DataFrame(res_b.data[0]['dados_json'])
+                            t_usadas = df_h['lista_t'].iloc[0]
+                            res_t = supabase.table("transportadoras").select("*").in_("nome", t_usadas).execute()
+                            df_ts = pd.DataFrame(res_t.data)
+                            df_detalhado = engine_calculo(df_base, t_usadas, df_ts)
+                            excel = to_excel(df_detalhado)
+                            st.download_button("Clique aqui para salvar o arquivo", excel, f"Cotação_{dt.replace('/','-').replace(':','-')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                
+                if c2.button("🗑️ Remover", key=f"del_{r['id']}"):
+                    supabase.table("cotacoes").delete().eq("id", r['id']).execute()
                     st.rerun()
     else: st.info("Nenhuma cotação salva.")
