@@ -221,7 +221,6 @@ with st.sidebar:
         "🧮 Cotação", 
         "🚛 Cadastro de Transportadora", 
         "💰 Calculo de Comparativo",
-        "---", # O CSS vai esconder a bolinha daqui e desenhar a linha
         "📂 Base de Notas", 
         "📜 Historico de Comparativos"
     ]
