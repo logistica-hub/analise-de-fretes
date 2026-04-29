@@ -457,61 +457,58 @@ elif menu == "📜 Historico de Comparativos":
     st.title("📜 Historico de Comparativos")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
     
+    # Buscamos a base e as transportadoras atuais para refazer o cálculo em tempo real
+    res_base = supabase.table("base_comercial").select("*").execute()
+    res_t = supabase.table("transportadoras").select("*").execute()
+    df_ts_atual = pd.DataFrame(res_t.data)
+
     if res_h.data:
         for r in res_h.data:
             dt, detalhes, qtd_total_h = r['data_hora'], r['detalhes_json'], r['qtd']
-            # O total do card é a soma dos fretes de todas as transportadoras naquele cálculo
             total_frete_h = sum(item['valor_total_frete'] for item in detalhes)
             
             with st.expander(f"📅 {dt}  |  📦 {qtd_total_h} Notas  |  💰 {format_brl(total_frete_h)}"):
-                df_h = pd.DataFrame(detalhes)
+                # O 'detalhes_json' aqui serve apenas para o resumo visual do expander
+                df_h_resumo = pd.DataFrame(detalhes)
+                transportadoras_na_epoca = df_h_resumo['transportadora'].unique().tolist()
                 
-                # Exibe um resumo rápido no expander
-                consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
-                st.markdown("### Consolidado por Transportadora")
+                st.markdown("### Resumo do Comparativo")
+                consolidado_t = df_h_resumo.groupby('transportadora')['valor_total_frete'].sum().reset_index()
                 for _, row_t in consolidado_t.iterrows():
                     st.write(f"**{row_t['transportadora']}**: {format_brl(row_t['valor_total_frete'])}")
                 
                 st.divider()
                 
-                # Colunas para os botões de ação
                 c_btn_down, c_btn_del = st.columns([0.7, 0.3])
                 
                 with c_btn_down:
-                    try:
-                        # Reconstruímos o DataFrame para o formato que a função to_excel espera
-                        # Precisamos renomear as colunas para que o to_excel identifique os totais
-                        df_para_excel = df_h.copy()
-                        
-                        # Criamos a estrutura de colunas dinâmicas (TOTAL_Transportadora)
-                        df_pivot = df_para_excel.pivot_table(
-                            index=['uf', 'mes_nf', 'qtd', 'valor_total_notas', 'peso_total'],
-                            columns='transportadora',
-                            values='valor_total_frete'
-                        ).reset_index()
-                        
-                        # Renomeia colunas para o padrão TOTAL_Nome da Transp
-                        novas_cols = []
-                        for col in df_pivot.columns:
-                            if col in df_h['transportadora'].unique():
-                                novas_cols.append(f"TOTAL_{col}")
-                            else:
-                                novas_cols.append(col)
-                        df_pivot.columns = novas_cols
-
-                        # Gera o binário do Excel usando sua função original
-                        excel_bin = to_excel(df_pivot)
-                        
-                        st.download_button(
-                            label="📥 Baixar Excel Detalhado",
-                            data=excel_bin,
-                            file_name=f"Comparativo_Frete_{dt.replace('/', '-').replace(':', 'h')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=f"dl_{r['id']}",
-                            use_container_width=True
-                        )
-                    except Exception as e:
-                        st.error(f"Erro ao processar download: {e}")
+                    if not res_base.data:
+                        st.warning("Base de notas original não encontrada para processar.")
+                    else:
+                        # RE-CÁLCULO EM TEMPO REAL PARA O EXCEL DETALHADO
+                        if st.button("📥 Gerar e Baixar Excel Detalhado", key=f"gen_{r['id']}", use_container_width=True):
+                            with st.spinner("Re-calculando taxas uma a uma..."):
+                                try:
+                                    # 1. Recupera a base de notas
+                                    df_base_original = pd.DataFrame(res_base.data[0]['dados_json'])
+                                    
+                                    # 2. Roda o motor de cálculo novamente (gera todas as taxas/colunas)
+                                    df_detalhado = engine_calculo(df_base_original, transportadoras_na_epoca, df_ts_atual)
+                                    
+                                    # 3. Gera o arquivo usando sua função to_excel (que cria a aba Geral e as abas por Transp)
+                                    excel_bin = to_excel(df_detalhado)
+                                    
+                                    # 4. Oferece o download (usamos um state para mostrar o link após processar)
+                                    st.download_button(
+                                        label="✅ Arquivo Pronto! Clique para Salvar",
+                                        data=excel_bin,
+                                        file_name=f"Comparativo_DETALHADO_{dt.replace('/', '-').replace(':', 'h')}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        key=f"dl_real_{r['id']}",
+                                        use_container_width=True
+                                    )
+                                except Exception as e:
+                                    st.error(f"Erro ao processar: {e}")
                 
                 with c_btn_del:
                     if st.button("🗑️ Excluir", key=f"del_h_{r['id']}", use_container_width=True):
