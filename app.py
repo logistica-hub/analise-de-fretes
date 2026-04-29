@@ -460,38 +460,61 @@ elif menu == "📜 Historico de Comparativos":
     if res_h.data:
         for r in res_h.data:
             dt, detalhes, qtd_total_h = r['data_hora'], r['detalhes_json'], r['qtd']
+            # O total do card é a soma dos fretes de todas as transportadoras naquele cálculo
             total_frete_h = sum(item['valor_total_frete'] for item in detalhes)
             
             with st.expander(f"📅 {dt}  |  📦 {qtd_total_h} Notas  |  💰 {format_brl(total_frete_h)}"):
                 df_h = pd.DataFrame(detalhes)
-                consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
                 
+                # Exibe um resumo rápido no expander
+                consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
                 st.markdown("### Consolidado por Transportadora")
                 for _, row_t in consolidado_t.iterrows():
                     st.write(f"**{row_t['transportadora']}**: {format_brl(row_t['valor_total_frete'])}")
                 
                 st.divider()
                 
-                c_btn_down, c_btn_del = st.columns([0.8, 0.2])
+                # Colunas para os botões de ação
+                c_btn_down, c_btn_del = st.columns([0.7, 0.3])
                 
                 with c_btn_down:
-                    # Geramos o Excel a partir dos dados do histórico
-                    # Nota: Como o histórico salva apenas o resumo, o Excel terá os dados consolidados
                     try:
-                        excel_data = to_excel(df_h)
+                        # Reconstruímos o DataFrame para o formato que a função to_excel espera
+                        # Precisamos renomear as colunas para que o to_excel identifique os totais
+                        df_para_excel = df_h.copy()
+                        
+                        # Criamos a estrutura de colunas dinâmicas (TOTAL_Transportadora)
+                        df_pivot = df_para_excel.pivot_table(
+                            index=['uf', 'mes_nf', 'qtd', 'valor_total_notas', 'peso_total'],
+                            columns='transportadora',
+                            values='valor_total_frete'
+                        ).reset_index()
+                        
+                        # Renomeia colunas para o padrão TOTAL_Nome da Transp
+                        novas_cols = []
+                        for col in df_pivot.columns:
+                            if col in df_h['transportadora'].unique():
+                                novas_cols.append(f"TOTAL_{col}")
+                            else:
+                                novas_cols.append(col)
+                        df_pivot.columns = novas_cols
+
+                        # Gera o binário do Excel usando sua função original
+                        excel_bin = to_excel(df_pivot)
+                        
                         st.download_button(
-                            label="📥 Baixar Comparativo (Excel)",
-                            data=excel_data,
-                            file_name=f"comparativo_{dt.replace('/', '_').replace(':', '_')}.xlsx",
+                            label="📥 Baixar Excel Detalhado",
+                            data=excel_bin,
+                            file_name=f"Comparativo_Frete_{dt.replace('/', '-').replace(':', 'h')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key=f"dl_{r['id']}",
                             use_container_width=True
                         )
                     except Exception as e:
-                        st.error("Erro ao gerar arquivo.")
+                        st.error(f"Erro ao processar download: {e}")
                 
                 with c_btn_del:
-                    if st.button("🗑️ Excluir", key=f"del_h_{r['id']}", help="Excluir este histórico", use_container_width=True):
+                    if st.button("🗑️ Excluir", key=f"del_h_{r['id']}", use_container_width=True):
                         supabase.table("cotacoes").delete().eq("id", r['id']).execute()
                         st.rerun()
     else:
