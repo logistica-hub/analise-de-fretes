@@ -472,13 +472,23 @@ elif menu == "📜 Historico de Comparativos":
                 
                 st.divider()
                 
-                # Criando colunas INTERNAS ao expander para os botões ficarem na mesma linha
                 c_btn_down, c_btn_del = st.columns([0.8, 0.2])
                 
                 with c_btn_down:
-                    if st.button("🛠️ Preparar Download Detalhado", key=f"prep_{r['id']}", use_container_width=True):
-                        with st.spinner("Processando..."):
-                            pass # Lógica de download
+                    # Geramos o Excel a partir dos dados do histórico
+                    # Nota: Como o histórico salva apenas o resumo, o Excel terá os dados consolidados
+                    try:
+                        excel_data = to_excel(df_h)
+                        st.download_button(
+                            label="📥 Baixar Comparativo (Excel)",
+                            data=excel_data,
+                            file_name=f"comparativo_{dt.replace('/', '_').replace(':', '_')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"dl_{r['id']}",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error("Erro ao gerar arquivo.")
                 
                 with c_btn_del:
                     if st.button("🗑️ Excluir", key=f"del_h_{r['id']}", help="Excluir este histórico", use_container_width=True):
