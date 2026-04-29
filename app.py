@@ -486,8 +486,8 @@ elif menu == "📜 Historico de Comparativos":
                         st.warning("Base de notas original não encontrada para processar.")
                     else:
                         # RE-CÁLCULO EM TEMPO REAL PARA O EXCEL DETALHADO
-                        if st.button("📥 Gerar e Baixar Excel Detalhado", key=f"gen_{r['id']}", use_container_width=True):
-                            with st.spinner("Re-calculando taxas uma a uma..."):
+                        if st.button("📥 Exportar Excel", key=f"gen_{r['id']}", use_container_width=True):
+                            with st.spinner("Processando dados..."):
                                 try:
                                     # 1. Recupera a base de notas
                                     df_base_original = pd.DataFrame(res_base.data[0]['dados_json'])
@@ -500,9 +500,9 @@ elif menu == "📜 Historico de Comparativos":
                                     
                                     # 4. Oferece o download (usamos um state para mostrar o link após processar)
                                     st.download_button(
-                                        label="✅ Arquivo Pronto! Clique para Salvar",
+                                        label="✅ Arquivo Pronto! Clique para Baixar",
                                         data=excel_bin,
-                                        file_name=f"Comparativo_DETALHADO_{dt.replace('/', '-').replace(':', 'h')}.xlsx",
+                                        file_name=f"Comparativo_Detalhado_{dt.replace('/', '-').replace(':', 'h')}.xlsx",
                                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                         key=f"dl_real_{r['id']}",
                                         use_container_width=True
