@@ -456,16 +456,32 @@ elif menu == "💰 Calculo de Comparativo":
 elif menu == "📜 Historico de Comparativos":
     st.title("📜 Historico de Comparativos")
     res_h = supabase.table("cotacoes").select("*").order("id", desc=True).execute()
+    
     if res_h.data:
         for r in res_h.data:
             dt, detalhes, qtd_total_h = r['data_hora'], r['detalhes_json'], r['qtd']
             total_frete_h = sum(item['valor_total_frete'] for item in detalhes)
-            with st.expander(f"📅 {dt}  |  📦 {qtd_total_h} Notas  |  💰 {format_brl(total_frete_h)}"):
-                df_h = pd.DataFrame(detalhes)
-                consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
-                st.markdown("### Consolidado por Transportadora")
-                for _, row_t in consolidado_t.iterrows():
-                    st.write(f"**{row_t['transportadora']}**: {format_brl(row_t['valor_total_frete'])}")
-                st.divider()
-                if st.button("🛠️ Preparar Download Detalhado", key=f"prep_{r['id']}"):
-                    with st.spinner("Processando..."): pass
+            
+            # Criamos duas colunas: uma larga para o expander e uma estreita para o botão de excluir
+            col_exp, col_del = st.columns([0.9, 0.1])
+            
+            with col_exp:
+                with st.expander(f"📅 {dt}  |  📦 {qtd_total_h} Notas  |  💰 {format_brl(total_frete_h)}"):
+                    df_h = pd.DataFrame(detalhes)
+                    consolidado_t = df_h.groupby('transportadora')['valor_total_frete'].sum().reset_index()
+                    st.markdown("### Consolidado por Transportadora")
+                    for _, row_t in consolidado_t.iterrows():
+                        st.write(f"**{row_t['transportadora']}**: {format_brl(row_t['valor_total_frete'])}")
+                    st.divider()
+                    if st.button("🛠️ Preparar Download Detalhado", key=f"prep_{r['id']}"):
+                        with st.spinner("Processando..."): 
+                            pass # Lógica de download futura
+            
+            with col_del:
+                # Botão de exclusão alinhado ao expander
+                st.write("") # Pequeno espaçamento para alinhamento
+                if st.button("🗑️", key=f"del_h_{r['id']}", help="Excluir este histórico"):
+                    supabase.table("cotacoes").delete().eq("id", r['id']).execute()
+                    st.rerun()
+    else:
+        st.info("Nenhum histórico de comparativos encontrado.")
