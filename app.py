@@ -125,13 +125,13 @@ def engine_calculo(df_base, selecionadas, df_ts):
         ped = np.ceil(pesos_notas/100) * get_v(m['taxas'].get("Pedagio"))
         suf = get_v(m['taxas'].get("Suframa"))
         seccat = get_v(m['taxas'].get("SEC-CAT"))
-        fluv = valores_notas * get_v(m['taxas'].get("Fluvial"))
+        flv = valores_notas * get_v(m['taxas'].get("Fluvial"))
         red_f = valores_notas * get_v(m['taxas'].get("Redespacho Fluvial"))
         tda = np.maximum(valores_notas * get_v(m['taxas'].get("TDA %")), get_v(m['taxas'].get("TDA Min")))
-        tde = np.maximum(valores_notas * get_v(m['taxas'].get("TDE %")), get_v(m['taxas'].get("TDE Min")))
         despacho = get_v(m['taxas'].get("Despacho"))
         
-        frete_parcial = (f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + suf + seccat + fluv + red_f + tda + tde + despacho)
+        # O TRT incide sobre a soma de todas as demais taxas combinadas (Frete Parcial)
+        frete_parcial = (f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + suf + seccat + flv + red_f + tda + despacho)
         trt = frete_parcial * get_v(m['taxas'].get("TRT %"))
 
         frete_total = (frete_parcial + trt) * mask_atendida
@@ -146,10 +146,9 @@ def engine_calculo(df_base, selecionadas, df_ts):
         df_final[f'CTRC_{t_nome}'] = get_v(m['taxas'].get("CTRC")) * mask_atendida
         df_final[f'SUFRAMA_{t_nome}'] = suf * mask_atendida
         df_final[f'SEC_CAT_{t_nome}'] = seccat * mask_atendida
-        df_final[f'FLUVIAL_{t_nome}'] = fluv * mask_atendida
+        df_final[f'FLUVIAL_{t_nome}'] = flv * mask_atendida
         df_final[f'REDESPACHO_F_{t_nome}'] = red_f * mask_atendida
         df_final[f'TDA_{t_nome}'] = tda * mask_atendida
-        df_final[f'TDE_{t_nome}'] = tde * mask_atendida
         df_final[f'DESPACHO_{t_nome}'] = despacho * mask_atendida
         df_final[f'TRT_{t_nome}'] = trt * mask_atendida
         df_final[f'TOTAL_{t_nome}'] = frete_total
@@ -159,7 +158,7 @@ def to_excel(df_completo):
     output = BytesIO()
     cols_total = [c for c in df_completo.columns if c.startswith("TOTAL_")]
     transportadoras = [c.replace("TOTAL_", "") for c in cols_total]
-    prefixos = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "SUFRAMA_", "SEC_CAT_", "FLUVIAL_", "REDESPACHO_F_", "TDA_", "TDE_", "DESPACHO_", "TRT_", "OUTROS_", "TOTAL_"]
+    prefixos = ["PESO_BASE_", "KG_ADIC_", "ADVAL_", "GRIS_", "EMEX_", "PEDAGIO_", "TAS_", "CTRC_", "SUFRAMA_", "SEC_CAT_", "FLUVIAL_", "REDESPACHO_F_", "TDA_", "DESPACHO_", "TRT_", "OUTROS_", "TOTAL_"]
     cols_originais = [c for c in df_completo.columns if not any(c.startswith(p) for p in prefixos)]
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_geral = df_completo[cols_originais + cols_total].copy()
@@ -322,7 +321,7 @@ elif menu == "🧮 Cotação":
                         mapeamento_taxas = {
                             "PESO_BASE": "Frete Peso", "KG_ADIC": "KG Adicional", "ADVAL": "Ad Valorem", "GRIS": "Gris", "EMEX": "Emex",
                             "PEDAGIO": "Pedágio", "TAS": "TAS", "CTRC": "CTRC", "SUFRAMA": "Suframa", "SEC_CAT": "SEC-CAT",
-                            "FLUVIAL": "Fluvial", "REDESPACHO_F": "Redespacho Fluv.", "TDA": "TDA", "TDE": "TDE", "DESPACHO": "Despacho", "TRT": "TRT"
+                            "FLUVIAL": "Fluvial", "REDESPACHO_F": "Redespacho Fluv.", "TDA": "TDA", "DESPACHO": "Despacho", "TRT": "TRT"
                         }
                         for item in ranking:
                             t_nome = item['transp']
@@ -400,7 +399,7 @@ elif menu == "🚛 Cadastro de Transportadora":
                 r = st.columns(3); f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
                 faixas.append({"min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")})
             st.divider(); st.markdown("### 💰 Mapeamento de Taxas Adicionais")
-            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "SEC-CAT", "Fluvial", "Redespacho Fluvial", "TDA %", "TDA Min", "TDE %", "TDE Min", "Despacho", "TRT %"]
+            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "SEC-CAT", "Fluvial", "Redespacho Fluvial", "TDA %", "TDA Min", "Despacho", "TRT %"]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
                 v_tx = mapa.get('taxas', {}).get(tx, "Não mapear")
@@ -500,7 +499,7 @@ elif menu == "📜 Historico de Comparativos":
                                     # 3. Gera o arquivo usando sua função to_excel (que cria a aba Geral e as abas por Transp)
                                     excel_bin = to_excel(df_detalhado)
                                     
-                                    # 4. Oferece o download (usamos um state para mostrar o link após processar)
+                                    # 4. Oferece o download
                                     st.download_button(
                                         label="✅ Arquivo Pronto! Clique para Baixar",
                                         data=excel_bin,
