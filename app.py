@@ -130,9 +130,8 @@ def engine_calculo(df_base, selecionadas, df_ts):
         tda = np.maximum(valores_notas * get_v(m['taxas'].get("TDA %")), get_v(m['taxas'].get("TDA Min")))
         despacho = get_v(m['taxas'].get("Despacho"))
         
-        # O TRT incide sobre a soma de todas as demais taxas combinadas (Frete Parcial)
         frete_parcial = (f_peso + adv + grs + emx + ped + get_v(m['taxas'].get("TAS")) + get_v(m['taxas'].get("CTRC")) + suf + seccat + flv + red_f + tda + despacho)
-        trt = frete_parcial * get_v(m['taxas'].get("TRT %"))
+        trt = np.maximum(frete_parcial * get_v(m['taxas'].get("TRT %")), get_v(m['taxas'].get("TRT Min")))
 
         frete_total = (frete_parcial + trt) * mask_atendida
 
@@ -399,7 +398,7 @@ elif menu == "🚛 Cadastro de Transportadora":
                 r = st.columns(3); f_i = mapa.get('faixas', [])[i] if i < len(mapa.get('faixas', [])) else {}
                 faixas.append({"min": r[0].number_input("De kg", value=float(f_i.get('min', 0.0)), key=f"mi{i}"), "max": r[1].number_input("Até kg", value=float(f_i.get('max', 0.0)), key=f"ma{i}"), "col": r[2].selectbox("Coluna na Tabela", cols_t, index=cols_t.index(f_i.get('col')) if f_i.get('col') in cols_t else 0, key=f"co{i}")})
             st.divider(); st.markdown("### 💰 Mapeamento de Taxas Adicionais")
-            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "SEC-CAT", "Fluvial", "Redespacho Fluvial", "TDA %", "TDA Min", "Despacho", "TRT %"]
+            taxas_nomes = ["Ad Valorem %", "Ad Valorem Min", "TAS", "CTRC", "Pedagio", "Gris %", "Gris Min", "Emex %", "Emex Min", "Suframa", "SEC-CAT", "Fluvial", "Redespacho Fluvial", "TDA %", "TDA Min", "Despacho", "TRT %", "TRT Min"]
             m_taxas = {}; tx_cols = st.columns(3)
             for idx, tx in enumerate(taxas_nomes):
                 v_tx = mapa.get('taxas', {}).get(tx, "Não mapear")
@@ -426,7 +425,7 @@ elif menu == "💰 Calculo de Comparativo":
         st.info(f"Utilizando Base de Notas salva: {len(df_base)} notas.")
         selecionadas = st.multiselect("Selecione as Transportadoras", df_ts['nome'].tolist())
         if selecionadas and st.button("🚀 Calcular"):
-            with st.spinner("Processando indicadores..."):
+            with st.spinner("Processando indicators..."):
                 df_calc = engine_calculo(df_base, selecionadas, df_ts)
                 data_sp = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M")
                 col_uf = next((c for c in df_base.columns if c.upper() == 'UF'), 'UF')
@@ -499,7 +498,7 @@ elif menu == "📜 Historico de Comparativos":
                                     # 3. Gera o arquivo usando sua função to_excel (que cria a aba Geral e as abas por Transp)
                                     excel_bin = to_excel(df_detalhado)
                                     
-                                    # 4. Oferece o download
+                                    # 4. Oferece o download (usamos um state para mostrar o link após processar)
                                     st.download_button(
                                         label="✅ Arquivo Pronto! Clique para Baixar",
                                         data=excel_bin,
