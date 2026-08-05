@@ -511,7 +511,7 @@ elif menu == "📜 Historico de Comparativos":
                                     st.error(f"Erro ao processar: {e}")
                 
                 with c_btn_del:
-                    if st.button("🗑️ Excluir", key=f"del_h_{r['id']}", use_container_width=True):
+                    if st.button("🗑️ Excluirr", key=f"del_h_{r['id']}", use_container_width=True):
                         supabase.table("cotacoes").delete().eq("id", r['id']).execute()
                         st.rerun()
     else:
